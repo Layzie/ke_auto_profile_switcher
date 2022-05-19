@@ -2,13 +2,13 @@
 
 [package]
 name = "ke_auto_profile_switcher"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["HIRAKI Satoru <saruko313@gmail.com>"]
 repository = "https://github.com/Layzie/ke_auto_profile_switcher"
 description = "This CLI automatically switches Karabiner-Elements profiles with and without USB keyboard connection"
 categories = ["command-line-utilities"]
 keywords = ["cli", "karabiner-elements"]
-license-file = "LICENSE"
+license = "MIT"
 readme = "README.md"
 edition = "2021"
 
