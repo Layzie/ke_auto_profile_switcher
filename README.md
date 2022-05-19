@@ -7,7 +7,7 @@ This CLI automatically switches [Karabiner-Elements](https://karabiner-elements.
 
 ## Install
 ```bash
-$ cargo install ke_auto_profile_changer
+$ cargo install ke_auto_profile_switcher
 ```
 
 ## Usage
