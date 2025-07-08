@@ -1,0 +1,45 @@
+name: Auto Tag on Merge
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Extract version from Cargo.toml
+      id: get_version
+      run: |
+        VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+        echo "Extracted version: $VERSION"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Check if tag exists
+      id: check_tag
+      run: |
+        if git rev-parse "refs/tags/v${{ steps.get_version.outputs.version }}" >/dev/null 2>&1; then
+          echo "Tag v${{ steps.get_version.outputs.version }} already exists, skipping tag creation"
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "Tag v${{ steps.get_version.outputs.version }} does not exist, will create it"
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create and push tag
+      if: steps.check_tag.outputs.exists == 'false'
+      run: |
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        echo "Creating tag ${{ steps.get_version.outputs.tag }}"
+        git tag ${{ steps.get_version.outputs.tag }}
+        echo "Pushing tag ${{ steps.get_version.outputs.tag }}"
+        git push origin ${{ steps.get_version.outputs.tag }}
+        echo "Tag ${{ steps.get_version.outputs.tag }} created successfully"
