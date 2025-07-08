@@ -1,12 +1,10 @@
 name: Release to crates.io (trusted publishing)
 
-on:
-  push:
-    tags:
-      - 'v*'
+on: create
 
 jobs:
   publish:
+    if: github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')
     runs-on: ubuntu-latest
 
     permissions:
