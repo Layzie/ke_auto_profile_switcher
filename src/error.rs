@@ -20,8 +20,11 @@ pub enum AppError {
     #[error("Home directory not found")]
     HomeDirectoryNotFound,
     
-    #[error("Generic error: {0}")]
-    Generic(#[from] anyhow::Error),
+    #[error("Missing required argument: {0}")]
+    MissingArgument(String),
+    
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;
