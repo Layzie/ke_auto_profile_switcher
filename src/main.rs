@@ -1,85 +1,51 @@
-use clap::{Parser, Subcommand};
-use std::process::Command;
-use usb_enumeration::{Event, Observer};
+use clap::Parser;
+use ke_auto_profile_switcher::{
+    cli::{Action, Args, WatchArgs},
+    config::resolve_config,
+    karabiner::KarabinerController,
+    usb_monitor::{list_usb_devices, UsbMonitor},
+    Result,
+};
 
-// Auto Karabiner Element profile swithcer, based on keyboard availability
-#[derive(Parser, Debug)]
-#[clap (author, version, about, long_about = None)]
-struct Args {
-    #[clap(subcommand)]
-    action: Action,
-}
+fn main() -> Result<()> {
+    let cli = Args::parse();
 
-// Check connected USB diveces
-#[derive(Subcommand, Debug)]
-enum Action {
-    #[clap(help = "Watching USB device's connection")]
-    Watch(WatchArgs),
-    #[clap(help = "Check USB device information")]
-    Check {},
-}
-
-#[derive(clap::Args, Debug)]
-#[clap (author, version, about, long_about = None)]
-struct WatchArgs {
-    #[clap(short, long, help = "Number of external USB keyboard product id")]
-    keyboard_id: u16,
-    #[clap(
-        short,
-        long,
-        help = "Name of Karabiner-Elements profile using external keyboard"
-    )]
-    product_profile: String,
-    #[clap(
-        short,
-        long,
-        default_value = "Default",
-        help = "Name of default Karbiner-Elements profile"
-    )]
-    default_profile: String,
-}
-
-fn check_keyboard_id() {
-    let devices = usb_enumeration::enumerate(None, None);
-    for device in devices.iter() {
-        println!("{:?}", device);
-    }
-}
-
-fn change_karabiner_profile(watch_args: WatchArgs) {
-    let mut karabiner =
-        Command::new("/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli");
-    let keyboard = Observer::new()
-        .with_poll_interval(2)
-        .with_product_id(watch_args.keyboard_id)
-        .subscribe();
-    for event in keyboard.rx_event.iter() {
-        match event {
-            Event::Initial(d) => println!("Initial devices: {:?}", d),
-            Event::Connect(d) => {
-                println!("Connected device: {:?}", d);
-                karabiner
-                    .arg("--select-profile")
-                    .arg(&watch_args.product_profile)
-                    .output()
-                    .expect("select profile process failed to execute");
-            }
-            Event::Disconnect(d) => {
-                println!("Disconnected device: {:?}", d);
-                karabiner
-                    .arg("--select-profile")
-                    .arg(&watch_args.default_profile)
-                    .output()
-                    .expect("select profile process failed to execute");
-            }
+    match cli.action {
+        Action::Watch {
+            keyboard_id,
+            product_profile,
+            default_profile,
+        } => {
+            let config = resolve_config(keyboard_id, product_profile, default_profile)?;
+            let watch_args = WatchArgs::from_config(&config);
+            start_monitoring(watch_args)?;
+        }
+        Action::Check {} => {
+            list_usb_devices();
         }
     }
+
+    Ok(())
 }
 
-fn main() {
-    let cli = Args::parse();
-    match cli.action {
-        Action::Watch(watch_args) => change_karabiner_profile(watch_args),
-        Action::Check {} => check_keyboard_id(),
-    }
+fn start_monitoring(watch_args: WatchArgs) -> Result<()> {
+    let karabiner = KarabinerController::new();
+    let monitor = UsbMonitor::new(watch_args.keyboard_id);
+
+    let product_profile = watch_args.product_profile.clone();
+    let default_profile = watch_args.default_profile.clone();
+
+    let on_connect = {
+        let karabiner = karabiner.clone();
+        let profile = product_profile.clone();
+        move || karabiner.switch_profile(&profile)
+    };
+
+    let on_disconnect = {
+        let karabiner = karabiner.clone();
+        let profile = default_profile.clone();
+        move || karabiner.switch_profile(&profile)
+    };
+
+    monitor.start_monitoring(on_connect, on_disconnect)
 }
