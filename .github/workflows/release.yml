@@ -2,11 +2,13 @@ name: Release to crates.io (trusted publishing)
 
 on:
   create:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
   publish:
-    if: github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')
+    if: github.event.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     permissions:
@@ -16,14 +18,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+      - name: Ensure tag is on main branch
+        if: github.event.ref_type == 'tag'
+        run: |
+          git fetch origin main
+          TAG_COMMIT=$(git rev-parse ${{ github.sha }})
+          if ! git merge-base --is-ancestor $TAG_COMMIT origin/main; then
+            echo "❌ Tag is not on main branch. Skipping."
+            exit 1
+          fi
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-      
       - name: Publish to crates.io using trusted publishing
         run: cargo publish --no-interactive
