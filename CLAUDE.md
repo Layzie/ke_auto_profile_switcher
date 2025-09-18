@@ -57,6 +57,7 @@ cargo install --path .
 cargo test                            # Run all tests
 cargo test config::tests::           # Run specific module tests
 cargo test test_config_serialization # Run single test
+cargo test -- --nocapture            # Run tests with output
 
 # Code quality
 cargo clippy                         # Linting
@@ -103,7 +104,7 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 
 - **macOS specific**: Uses hardcoded path to Karabiner-Elements CLI defined in `src/constants.rs`
 - **Requires Karabiner-Elements** to be installed on the system
-- **Rust Edition**: Uses Rust 2024 edition for latest language features
+- **Rust Edition**: Uses Rust 2021 edition
 
 ## Development Guidelines
 
