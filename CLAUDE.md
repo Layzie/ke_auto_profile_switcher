@@ -104,7 +104,7 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 
 - **macOS specific**: Uses hardcoded path to Karabiner-Elements CLI defined in `src/constants.rs`
 - **Requires Karabiner-Elements** to be installed on the system
-- **Rust Edition**: Uses Rust 2021 edition
+- **Rust Edition**: Uses Rust 2024 edition for latest language features
 
 ## Development Guidelines
 
