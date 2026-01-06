@@ -1,11 +1,27 @@
+//! Legacy USB monitor module.
+//!
+//! This module is kept for backward compatibility.
+//! New code should use `crate::monitor::usb` instead.
+
+#![deprecated(
+    since = "0.3.0",
+    note = "Use `crate::monitor::usb::UsbMonitor` instead"
+)]
+
 use crate::constants::USB_POLL_INTERVAL_SECONDS;
 use crate::error::{AppError, Result};
 use usb_enumeration::{Event, Observer};
 
+/// Legacy USB monitor for single keyboard monitoring
+#[deprecated(
+    since = "0.3.0",
+    note = "Use `crate::monitor::usb::UsbMonitor` instead"
+)]
 pub struct UsbMonitor {
     keyboard_id: u16,
 }
 
+#[allow(deprecated)]
 impl UsbMonitor {
     pub fn new(keyboard_id: u16) -> Self {
         UsbMonitor { keyboard_id }
@@ -28,7 +44,10 @@ impl UsbMonitor {
                     // Check if the target keyboard is already connected
                     if devices.iter().any(|d| d.product_id == self.keyboard_id) {
                         on_connect().map_err(|e| {
-                            AppError::UsbDevice(format!("Failed to handle initial connection: {}", e))
+                            AppError::UsbDevice(format!(
+                                "Failed to handle initial connection: {}",
+                                e
+                            ))
                         })?;
                     }
                 }
@@ -51,6 +70,11 @@ impl UsbMonitor {
     }
 }
 
+/// List USB devices (legacy function)
+#[deprecated(
+    since = "0.3.0",
+    note = "Use `crate::monitor::usb::list_usb_devices` instead"
+)]
 pub fn list_usb_devices() {
     let devices = usb_enumeration::enumerate(None, None);
     if devices.is_empty() {

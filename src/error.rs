@@ -4,25 +4,28 @@ use thiserror::Error;
 pub enum AppError {
     #[error("Configuration error: {0}")]
     Config(String),
-    
+
     #[error("USB device error: {0}")]
     UsbDevice(String),
-    
+
+    #[error("Bluetooth device error: {0}")]
+    Bluetooth(String),
+
     #[error("Karabiner-Elements error: {0}")]
     Karabiner(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("YAML serialization error: {0}")]
     Yaml(#[from] serde_yaml::Error),
-    
+
     #[error("Home directory not found")]
     HomeDirectoryNotFound,
-    
+
     #[error("Missing required argument: {0}")]
     MissingArgument(String),
-    
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 }
