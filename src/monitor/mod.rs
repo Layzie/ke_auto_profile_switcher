@@ -52,6 +52,44 @@ impl DeviceIdentifier {
             }
         }
     }
+
+    /// Check if this device matches another device identifier
+    /// For USB, exact product_id match is required
+    /// For Bluetooth, case-insensitive partial match is used
+    pub fn matches(&self, other: &DeviceIdentifier) -> bool {
+        match (self, other) {
+            (
+                DeviceIdentifier::Usb { product_id: id1 },
+                DeviceIdentifier::Usb { product_id: id2 },
+            ) => id1 == id2,
+            (
+                DeviceIdentifier::Bluetooth { device_name: name1 },
+                DeviceIdentifier::Bluetooth { device_name: name2 },
+            ) => {
+                let name1_lower = name1.to_lowercase();
+                let name2_lower = name2.to_lowercase();
+                // Match if either contains the other (for partial matching)
+                name1_lower.contains(&name2_lower) || name2_lower.contains(&name1_lower)
+            }
+            _ => false,
+        }
+    }
+
+    /// Get the Bluetooth device name if this is a Bluetooth device
+    pub fn bluetooth_name(&self) -> Option<&str> {
+        match self {
+            DeviceIdentifier::Bluetooth { device_name } => Some(device_name),
+            _ => None,
+        }
+    }
+
+    /// Get the USB product ID if this is a USB device
+    pub fn usb_product_id(&self) -> Option<u16> {
+        match self {
+            DeviceIdentifier::Usb { product_id } => Some(*product_id),
+            _ => None,
+        }
+    }
 }
 
 /// Configuration for a single keyboard-profile mapping
@@ -63,6 +101,10 @@ pub struct KeyboardMapping {
     pub device: DeviceIdentifier,
     /// Profile to switch to when this keyboard is connected
     pub profile: String,
+    /// Priority for this keyboard (higher = more important, default: 0)
+    /// When multiple keyboards are connected, the one with higher priority is used
+    #[serde(default)]
+    pub priority: i32,
 }
 
 impl KeyboardMapping {
@@ -76,6 +118,22 @@ impl KeyboardMapping {
             name: name.into(),
             device,
             profile: profile.into(),
+            priority: 0,
+        }
+    }
+
+    /// Create a new keyboard mapping with priority
+    pub fn with_priority(
+        name: impl Into<String>,
+        device: DeviceIdentifier,
+        profile: impl Into<String>,
+        priority: i32,
+    ) -> Self {
+        KeyboardMapping {
+            name: name.into(),
+            device,
+            profile: profile.into(),
+            priority,
         }
     }
 }

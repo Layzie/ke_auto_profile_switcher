@@ -11,6 +11,11 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+/// Maximum number of retries for system_profiler command
+const MAX_RETRIES: u32 = 3;
+/// Initial delay between retries (will be exponentially increased)
+const RETRY_DELAY_MS: u64 = 500;
+
 /// Monitor for Bluetooth keyboard connections
 pub struct BluetoothMonitor {
     /// Device names to monitor
@@ -30,8 +35,36 @@ impl BluetoothMonitor {
         }
     }
 
-    /// Get currently connected Bluetooth devices using system_profiler
+    /// Get currently connected Bluetooth devices using system_profiler with retry
     fn get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
+        Self::get_connected_devices_with_retry(MAX_RETRIES)
+    }
+
+    /// Get connected devices with specified number of retries
+    fn get_connected_devices_with_retry(max_retries: u32) -> Result<Vec<BluetoothDeviceInfo>> {
+        let mut last_error = None;
+        let mut delay = Duration::from_millis(RETRY_DELAY_MS);
+
+        for attempt in 0..=max_retries {
+            match Self::try_get_connected_devices() {
+                Ok(devices) => return Ok(devices),
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        thread::sleep(delay);
+                        delay *= 2; // Exponential backoff
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            AppError::Bluetooth("Failed to get Bluetooth devices after retries".to_string())
+        }))
+    }
+
+    /// Try to get connected devices (single attempt)
+    fn try_get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
         let output = Command::new("system_profiler")
             .args(["SPBluetoothDataType", "-json"])
             .output()

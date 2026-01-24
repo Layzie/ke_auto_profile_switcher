@@ -41,6 +41,10 @@ pub enum Action {
         /// Default profile name (legacy option)
         #[arg(short, long, help = "Default Karabiner-Elements profile name")]
         default_profile: Option<String>,
+
+        /// Enable verbose logging for debugging
+        #[arg(short, long, help = "Enable verbose/debug logging")]
+        verbose: bool,
     },
 
     /// List available devices

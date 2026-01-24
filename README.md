@@ -9,9 +9,12 @@ This CLI automatically switches [Karabiner-Elements](https://karabiner-elements.
 - **Automatic Profile Switching**: Seamlessly switches between Karabiner profiles based on keyboard connection
 - **USB & Bluetooth Support**: Monitor both USB and Bluetooth keyboards
 - **Multiple Keyboard Support**: Configure different profiles for different keyboards
+- **Priority-Based Profile Selection**: When multiple keyboards are connected, the one with highest priority is used
 - **Multiple Configuration Methods**: Support for configuration files, command-line arguments, or interactive setup
 - **Interactive Setup**: First-time users are guided through an easy setup process
 - **Device Detection**: Lists available USB and Bluetooth devices to help identify your keyboards
+- **Verbose Mode**: Debug logging for troubleshooting connection issues
+- **Configuration Validation**: Warnings for duplicate mappings and invalid configurations
 
 ## Install
 ```bash
@@ -45,7 +48,7 @@ product_profile: "External Keyboard"
 default_profile: "Default"
 ```
 
-#### Advanced Configuration (Multiple Keyboards)
+#### Advanced Configuration (Multiple Keyboards with Priority)
 ```yaml
 version: 2
 default_profile: "Default"
@@ -55,16 +58,19 @@ keyboards:
       type: usb
       product_id: 1234
     profile: "Work Profile"
+    priority: 10  # Higher priority - this profile is preferred when multiple keyboards are connected
   - name: "Magic Keyboard"
     device:
       type: bluetooth
       device_name: "Magic Keyboard"
     profile: "Bluetooth Profile"
+    priority: 5
   - name: "Home Mechanical"
     device:
       type: usb
       product_id: 5678
     profile: "Gaming Profile"
+    priority: 0  # Default priority
 ```
 
 Then simply run:
@@ -97,6 +103,9 @@ Starts monitoring device connections and automatically switches Karabiner profil
 # Interactive mode (will prompt for configuration if needed)
 $ kaps watch
 
+# With verbose logging (useful for debugging)
+$ kaps watch --verbose
+
 # With command-line arguments (legacy USB-only mode)
 $ kaps watch --keyboard-id <PRODUCT_ID> --product-profile <EXTERNAL_PROFILE>
 
@@ -109,6 +118,7 @@ $ kaps watch --keyboard-id <PRODUCT_ID> --product-profile <EXTERNAL_PROFILE> --d
 - `--keyboard-id` (`-k`): USB product ID of your external keyboard (legacy option)
 - `--product-profile` (`-p`): Karabiner profile name to use when external keyboard is connected (legacy option)
 - `--default-profile` (`-d`): Karabiner profile name to use when external keyboard is disconnected (defaults to "Default")
+- `--verbose` (`-v`): Enable verbose/debug logging for troubleshooting
 
 ### Configuration Priority
 
@@ -132,11 +142,13 @@ keyboards:
       type: usb                  # Device type: "usb" or "bluetooth"
       product_id: 1234           # USB product ID (for USB devices)
     profile: "USB Profile"       # Profile to switch to when connected
+    priority: 10                 # Optional: higher = preferred when multiple connected
   - name: "My Bluetooth Keyboard"
     device:
       type: bluetooth
-      device_name: "Magic Keyboard"  # Bluetooth device name
+      device_name: "Magic Keyboard"  # Bluetooth device name (partial match supported)
     profile: "Bluetooth Profile"
+    priority: 5                  # Optional: defaults to 0 if not specified
 ```
 
 ### Version 1 (Legacy - Still Supported)
@@ -195,9 +207,10 @@ default_profile: "Default"
 ## How It Works
 
 - **USB Monitoring**: Uses the `usb_enumeration` crate for real-time USB device monitoring
-- **Bluetooth Monitoring**: Polls macOS `system_profiler` to detect Bluetooth device connections
+- **Bluetooth Monitoring**: Polls macOS `system_profiler` to detect Bluetooth device connections (with automatic retry on failure)
 - **Combined Monitoring**: Both USB and Bluetooth devices are monitored simultaneously
-- **Profile Priority**: When multiple keyboards are connected, the first matching keyboard's profile is used
+- **Priority-Based Selection**: When multiple keyboards are connected, the one with the highest `priority` value is used
+- **Partial Name Matching**: Bluetooth devices are matched using case-insensitive partial matching (e.g., "HHKB" matches "HHKB-BT")
 
 ## Requirements
 

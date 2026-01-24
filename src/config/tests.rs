@@ -151,3 +151,99 @@ fn test_to_legacy_not_possible_for_multiple() {
 
     assert!(config.to_legacy().is_none());
 }
+
+#[test]
+fn test_validate_empty_keyboards() {
+    let config = Config::new("Default", vec![]);
+    let warnings = config.validate();
+
+    assert!(warnings.iter().any(|w| w.contains("No keyboard mappings")));
+}
+
+#[test]
+fn test_validate_duplicate_usb_mappings() {
+    let mapping1 = KeyboardMapping::new("KB1", DeviceIdentifier::usb(1234), "Profile1");
+    let mapping2 = KeyboardMapping::new("KB2", DeviceIdentifier::usb(1234), "Profile2");
+    let config = Config::new("Default", vec![mapping1, mapping2]);
+
+    let warnings = config.validate();
+    assert!(warnings.iter().any(|w| w.contains("Duplicate device")));
+}
+
+#[test]
+fn test_validate_duplicate_bluetooth_mappings() {
+    let mapping1 = KeyboardMapping::new(
+        "KB1",
+        DeviceIdentifier::bluetooth("Magic Keyboard"),
+        "Profile1",
+    );
+    let mapping2 = KeyboardMapping::new(
+        "KB2",
+        DeviceIdentifier::bluetooth("MAGIC KEYBOARD"),
+        "Profile2",
+    );
+    let config = Config::new("Default", vec![mapping1, mapping2]);
+
+    let warnings = config.validate();
+    // Case-insensitive matching should detect this as duplicate
+    assert!(warnings.iter().any(|w| w.contains("Duplicate device")));
+}
+
+#[test]
+fn test_validate_empty_profile_name() {
+    let mapping = KeyboardMapping::new("KB1", DeviceIdentifier::usb(1234), "");
+    let config = Config::new("Default", vec![mapping]);
+
+    let warnings = config.validate();
+    assert!(warnings.iter().any(|w| w.contains("empty profile name")));
+}
+
+#[test]
+fn test_validate_valid_config() {
+    let mapping1 = KeyboardMapping::new("USB KB", DeviceIdentifier::usb(1234), "USB Profile");
+    let mapping2 = KeyboardMapping::new(
+        "BT KB",
+        DeviceIdentifier::bluetooth("Magic Keyboard"),
+        "BT Profile",
+    );
+    let config = Config::new("Default", vec![mapping1, mapping2]);
+
+    let warnings = config.validate();
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn test_keyboard_mapping_with_priority() {
+    let mapping = KeyboardMapping::with_priority(
+        "High Priority KB",
+        DeviceIdentifier::usb(1234),
+        "High Priority Profile",
+        100,
+    );
+
+    assert_eq!(mapping.priority, 100);
+    assert_eq!(mapping.name, "High Priority KB");
+}
+
+#[test]
+fn test_keyboard_mapping_default_priority() {
+    let mapping = KeyboardMapping::new("KB", DeviceIdentifier::usb(1234), "Profile");
+
+    assert_eq!(mapping.priority, 0);
+}
+
+#[test]
+fn test_config_with_priority_serialization() {
+    let mapping = KeyboardMapping::with_priority(
+        "Priority KB",
+        DeviceIdentifier::usb(1234),
+        "Profile",
+        50,
+    );
+    let config = Config::new("Default", vec![mapping]);
+
+    let yaml = serde_yaml::to_string(&config).unwrap();
+    let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
+
+    assert_eq!(deserialized.keyboards[0].priority, 50);
+}

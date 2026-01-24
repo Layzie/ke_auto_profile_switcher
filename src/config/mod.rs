@@ -43,6 +43,47 @@ impl Config {
         }
     }
 
+    /// Validate the configuration and return any warnings
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        // Check for duplicate device mappings
+        for (i, mapping1) in self.keyboards.iter().enumerate() {
+            for mapping2 in self.keyboards.iter().skip(i + 1) {
+                if mapping1.device.matches(&mapping2.device) {
+                    warnings.push(format!(
+                        "Duplicate device mapping detected: '{}' and '{}' match the same device",
+                        mapping1.name, mapping2.name
+                    ));
+                }
+            }
+        }
+
+        // Check for empty keyboard mappings
+        if self.keyboards.is_empty() {
+            warnings.push("No keyboard mappings configured".to_string());
+        }
+
+        // Check for empty profile names
+        if self.default_profile.trim().is_empty() {
+            warnings.push("Default profile name is empty".to_string());
+        }
+
+        for mapping in &self.keyboards {
+            if mapping.profile.trim().is_empty() {
+                warnings.push(format!(
+                    "Keyboard '{}' has an empty profile name",
+                    mapping.name
+                ));
+            }
+            if mapping.name.trim().is_empty() {
+                warnings.push("A keyboard mapping has an empty name".to_string());
+            }
+        }
+
+        warnings
+    }
+
     /// Load configuration from file, supporting both legacy and new formats
     pub fn load() -> Result<Self> {
         let config_path = Self::get_config_path()?;

@@ -16,9 +16,17 @@ fn main() -> Result<()> {
             keyboard_id,
             product_profile,
             default_profile,
+            verbose,
         } => {
             let config = resolve_config(keyboard_id, product_profile, default_profile)?;
-            start_monitoring(config)?;
+
+            // Validate configuration and show warnings
+            let warnings = config.validate();
+            for warning in &warnings {
+                eprintln!("Warning: {}", warning);
+            }
+
+            start_monitoring(config, verbose)?;
         }
         Action::Check { device_type } => {
             list_devices(device_type)?;
@@ -29,8 +37,8 @@ fn main() -> Result<()> {
 }
 
 /// Start monitoring for keyboard connections
-fn start_monitoring(config: Config) -> Result<()> {
-    let monitor = CombinedMonitor::new(config.keyboards, config.default_profile);
+fn start_monitoring(config: Config, verbose: bool) -> Result<()> {
+    let monitor = CombinedMonitor::new(config.keyboards, config.default_profile).with_verbose(verbose);
     monitor.start_monitoring()
 }
 
