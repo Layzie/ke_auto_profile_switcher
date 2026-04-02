@@ -89,16 +89,7 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 
 ## Dependencies
 
-- **Core functionality**:
-  - `usb_enumeration`: USB device monitoring and events
-  - `clap`: CLI argument parsing with derive features
-  - `serde` + `serde_yaml`: Configuration serialization
-  - `dirs`: System directory location
-- **Error handling**:
-  - `thiserror`: Custom error type derivation
-  - `anyhow`: Error context (imported but minimal usage)
-- **Testing**:
-  - `tempfile`: Temporary directories for filesystem tests
+詳細は`Cargo.toml`を参照。主要な依存: `usb_enumeration`(USB監視), `clap`(CLI), `serde`+`serde_yaml`(設定), `thiserror`(エラー型)
 
 ## Platform Notes
 
@@ -113,3 +104,14 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 - **Testing**: Use `tempfile::tempdir()` for filesystem-related tests
 - **Module Organization**: Keep modules focused on single responsibilities
 - **CLI Changes**: Update both `src/cli.rs` structs and help text consistently
+
+## CI/CD
+
+- `.github/workflows/release.yml`: タグ作成またはmanual triggerでリリースビルドを実行
+- `.github/workflows/tag-on-merge.yml`: mainブランチへのマージ時にタグを自動作成
+
+## Gotchas
+
+- **`serde_yaml` is deprecated**: ビルド時にdeprecation警告が出る。将来的に`serde_yml`等への移行が必要
+- **Rust 2024 edition**: `unsafe_op_in_unsafe_fn`がデフォルトdenyなど、従来editionとの挙動差に注意
+- **macOS限定**: `KARABINER_CLI_PATH`が`/Library/Application Support/...`にハードコードされており、他OSでは動作しない
