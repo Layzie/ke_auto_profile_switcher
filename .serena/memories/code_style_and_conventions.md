@@ -11,7 +11,7 @@
 ### Error Handling
 - Use `crate::Result<T>` for consistent error propagation throughout the application
 - Custom `AppError` type defined in `src/error.rs` with proper error chaining
-- Error variants: `Config`, `UsbDevice`, `Bluetooth`, `Karabiner`, `Io`, `Yaml`, `HomeDirectoryNotFound`, `MissingArgument`, `InvalidInput`
+- Error variants: `Config`, `UsbDevice`, `Bluetooth`, `Monitor`, `Karabiner`, `Io`, `Yaml`, `HomeDirectoryNotFound`, `MissingArgument`, `InvalidInput`
 - Prefer thiserror for custom error types over manual implementations
 
 ### Module Organization

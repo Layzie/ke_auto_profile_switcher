@@ -32,7 +32,6 @@ The application follows a modular architecture with clear separation of concerns
 - **`src/karabiner.rs`**: Karabiner-Elements CLI integration and profile switching
 - **`src/error.rs`**: Custom error types (`AppError`) with proper error chaining
 - **`src/constants.rs`**: Centralized application constants (paths, defaults, intervals)
-- **`src/usb_monitor.rs`**: Legacy USB monitor (deprecated, kept for backward compatibility)
 
 ### Key Architecture Patterns
 

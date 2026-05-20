@@ -17,7 +17,6 @@ The application follows a modular architecture with clear separation of concerns
 - **`src/karabiner.rs`**: Karabiner-Elements CLI integration and profile switching
 - **`src/error.rs`**: Custom error types (`AppError`) with proper error chaining
 - **`src/constants.rs`**: Centralized application constants (paths, defaults, intervals)
-- **`src/usb_monitor.rs`**: Legacy USB monitor (deprecated, kept for backward compatibility)
 
 ## Key Architecture Patterns
 
@@ -43,10 +42,14 @@ The application follows a modular architecture with clear separation of concerns
 - **Custom `Result<T>` type**: Throughout the application for consistent error handling
 - **Error propagation**: Proper error chaining with thiserror
 - **Detailed error reporting**: Context-aware error messages
-- **Error variants**: `Config`, `UsbDevice`, `Bluetooth`, `Karabiner`, `Io`, `Yaml`
+- **Error variants**: `Config`, `UsbDevice`, `Bluetooth`, `Monitor`, `Karabiner`, `Io`, `Yaml`, `HomeDirectoryNotFound`, `MissingArgument`, `InvalidInput`
 
 ### Modular Testing
 - **Per-module test suites**: Each module has dedicated tests
 - **Filesystem testing**: Uses `tempfile` for temporary directories in tests
 - **Configuration tests**: Tests for v1/v2 formats, serialization, CLI args conversion
 - **Backward compatibility tests**: Ensures legacy config format still works
+
+### Concurrency in CombinedMonitor
+- **State lock (`connected_devices: Mutex<Vec<ConnectedDevice>>`)**: スコープを限定し、`karabiner_cli` サブプロセス呼び出しの前にドロップする。USB と Bluetooth のスレッド間で event handler が互いをブロックしないようにするため。
+- **Apply cache (`last_applied: Mutex<Option<String>>`)**: 直前に適用したプロファイル名を保持し、同じプロファイルへの重複 switch を抑止する。`apply_target_profile` がこのロックを保持したまま subprocess を呼ぶことで、プロファイル切替自体は直列化される（複数スレッドが同時に Karabiner を叩くことはない）。
