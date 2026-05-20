@@ -61,24 +61,3 @@ pub enum Action {
         device_type: DeviceType,
     },
 }
-
-/// Legacy watch arguments for backward compatibility
-#[derive(Debug, Clone)]
-#[deprecated(since = "0.3.0", note = "Use Config directly instead")]
-pub struct WatchArgs {
-    pub keyboard_id: u16,
-    pub product_profile: String,
-    pub default_profile: String,
-}
-
-#[allow(deprecated)]
-impl WatchArgs {
-    /// Create from legacy config (single USB keyboard)
-    pub fn from_legacy_config(config: &crate::config::LegacyConfig) -> Self {
-        WatchArgs {
-            keyboard_id: config.keyboard_id,
-            product_profile: config.product_profile.clone(),
-            default_profile: config.default_profile.clone(),
-        }
-    }
-}

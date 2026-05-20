@@ -14,16 +14,8 @@ pub struct UsbMonitor {
 }
 
 impl UsbMonitor {
-    /// Create a new USB monitor for the given product IDs
     pub fn new(product_ids: Vec<u16>) -> Self {
         UsbMonitor { product_ids }
-    }
-
-    /// Create a USB monitor for a single product ID
-    pub fn single(product_id: u16) -> Self {
-        UsbMonitor {
-            product_ids: vec![product_id],
-        }
     }
 }
 

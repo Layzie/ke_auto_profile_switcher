@@ -23,19 +23,10 @@ pub struct BluetoothMonitor {
 }
 
 impl BluetoothMonitor {
-    /// Create a new Bluetooth monitor for the given device names
     pub fn new(device_names: Vec<String>) -> Self {
         BluetoothMonitor { device_names }
     }
 
-    /// Create a Bluetooth monitor for a single device name
-    pub fn single(device_name: impl Into<String>) -> Self {
-        BluetoothMonitor {
-            device_names: vec![device_name.into()],
-        }
-    }
-
-    /// Get currently connected Bluetooth devices using system_profiler with retry
     fn get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
         Self::get_connected_devices_with_retry(MAX_RETRIES)
     }
@@ -76,14 +67,12 @@ impl BluetoothMonitor {
             ));
         }
 
-        let json_str = String::from_utf8_lossy(&output.stdout);
-        Self::parse_bluetooth_json(&json_str)
+        Self::parse_bluetooth_json(&output.stdout)
     }
 
     /// Parse the JSON output from system_profiler
-    fn parse_bluetooth_json(json_str: &str) -> Result<Vec<BluetoothDeviceInfo>> {
-        // Parse the JSON structure
-        let json: serde_json::Value = serde_json::from_str(json_str)
+    fn parse_bluetooth_json(json_bytes: &[u8]) -> Result<Vec<BluetoothDeviceInfo>> {
+        let json: serde_json::Value = serde_json::from_slice(json_bytes)
             .map_err(|e| AppError::Bluetooth(format!("Failed to parse JSON: {}", e)))?;
 
         let mut devices = Vec::new();
@@ -111,7 +100,7 @@ impl BluetoothMonitor {
                                 let is_keyboard = info
                                     .get("device_minorType")
                                     .and_then(|v| v.as_str())
-                                    .map(|t| t.to_lowercase().contains("keyboard"))
+                                    .map(|t| t.to_ascii_lowercase().contains("keyboard"))
                                     .unwrap_or(false);
 
                                 devices.push(BluetoothDeviceInfo {
@@ -149,13 +138,13 @@ impl BluetoothMonitor {
                                 let connected = device
                                     .get("device_connected")
                                     .and_then(|v| v.as_str())
-                                    .map(|s| s == "attrib_Yes" || s.to_lowercase() == "yes")
+                                    .map(|s| s == "attrib_Yes" || s.eq_ignore_ascii_case("yes"))
                                     .unwrap_or(false);
 
                                 let is_keyboard = device
                                     .get("device_minorType")
                                     .and_then(|v| v.as_str())
-                                    .map(|t| t.to_lowercase().contains("keyboard"))
+                                    .map(|t| t.to_ascii_lowercase().contains("keyboard"))
                                     .unwrap_or(false);
 
                                 devices.push(BluetoothDeviceInfo {
@@ -174,11 +163,11 @@ impl BluetoothMonitor {
         Ok(devices)
     }
 
-    /// Check if a device name matches any of the monitored names
     fn matches_device(&self, device_name: &str) -> bool {
+        let device_lower = device_name.to_ascii_lowercase();
         self.device_names
             .iter()
-            .any(|name| device_name.to_lowercase().contains(&name.to_lowercase()))
+            .any(|name| device_lower.contains(&name.to_ascii_lowercase()))
     }
 }
 

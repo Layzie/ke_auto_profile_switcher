@@ -21,29 +21,16 @@ pub enum DeviceIdentifier {
 }
 
 impl DeviceIdentifier {
-    /// Create a USB device identifier
     pub fn usb(product_id: u16) -> Self {
         DeviceIdentifier::Usb { product_id }
     }
 
-    /// Create a Bluetooth device identifier
     pub fn bluetooth(device_name: impl Into<String>) -> Self {
         DeviceIdentifier::Bluetooth {
             device_name: device_name.into(),
         }
     }
 
-    /// Check if this is a USB device
-    pub fn is_usb(&self) -> bool {
-        matches!(self, DeviceIdentifier::Usb { .. })
-    }
-
-    /// Check if this is a Bluetooth device
-    pub fn is_bluetooth(&self) -> bool {
-        matches!(self, DeviceIdentifier::Bluetooth { .. })
-    }
-
-    /// Get display name for the device identifier
     pub fn display_name(&self) -> String {
         match self {
             DeviceIdentifier::Usb { product_id } => format!("USB (Product ID: {})", product_id),
@@ -53,9 +40,9 @@ impl DeviceIdentifier {
         }
     }
 
-    /// Check if this device matches another device identifier
-    /// For USB, exact product_id match is required
-    /// For Bluetooth, case-insensitive partial match is used
+    /// USB: exact product_id equality. Bluetooth: case-insensitive bidirectional
+    /// substring match so a config name can be a prefix/suffix of the actual
+    /// system-reported name (e.g. "HHKB" matches "HHKB-BT").
     pub fn matches(&self, other: &DeviceIdentifier) -> bool {
         match (self, other) {
             (
@@ -66,30 +53,14 @@ impl DeviceIdentifier {
                 DeviceIdentifier::Bluetooth { device_name: name1 },
                 DeviceIdentifier::Bluetooth { device_name: name2 },
             ) => {
-                let name1_lower = name1.to_lowercase();
-                let name2_lower = name2.to_lowercase();
-                // Match if either contains the other (for partial matching)
+                let name1_lower = name1.to_ascii_lowercase();
+                let name2_lower = name2.to_ascii_lowercase();
                 name1_lower.contains(&name2_lower) || name2_lower.contains(&name1_lower)
             }
             _ => false,
         }
     }
 
-    /// Get the Bluetooth device name if this is a Bluetooth device
-    pub fn bluetooth_name(&self) -> Option<&str> {
-        match self {
-            DeviceIdentifier::Bluetooth { device_name } => Some(device_name),
-            _ => None,
-        }
-    }
-
-    /// Get the USB product ID if this is a USB device
-    pub fn usb_product_id(&self) -> Option<u16> {
-        match self {
-            DeviceIdentifier::Usb { product_id } => Some(*product_id),
-            _ => None,
-        }
-    }
 }
 
 /// Configuration for a single keyboard-profile mapping
@@ -108,7 +79,6 @@ pub struct KeyboardMapping {
 }
 
 impl KeyboardMapping {
-    /// Create a new keyboard mapping
     pub fn new(
         name: impl Into<String>,
         device: DeviceIdentifier,
@@ -122,7 +92,6 @@ impl KeyboardMapping {
         }
     }
 
-    /// Create a new keyboard mapping with priority
     pub fn with_priority(
         name: impl Into<String>,
         device: DeviceIdentifier,

@@ -121,38 +121,6 @@ fn test_device_identifier_display() {
 }
 
 #[test]
-fn test_to_legacy_single_usb() {
-    let mapping = KeyboardMapping::new("USB Keyboard", DeviceIdentifier::usb(1234), "External");
-    let config = Config::new("Default", vec![mapping]);
-
-    let legacy = config.to_legacy().unwrap();
-    assert_eq!(legacy.keyboard_id, 1234);
-    assert_eq!(legacy.product_profile, "External");
-    assert_eq!(legacy.default_profile, "Default");
-}
-
-#[test]
-fn test_to_legacy_not_possible_for_bluetooth() {
-    let mapping = KeyboardMapping::new(
-        "BT Keyboard",
-        DeviceIdentifier::bluetooth("Magic Keyboard"),
-        "External",
-    );
-    let config = Config::new("Default", vec![mapping]);
-
-    assert!(config.to_legacy().is_none());
-}
-
-#[test]
-fn test_to_legacy_not_possible_for_multiple() {
-    let mapping1 = KeyboardMapping::new("KB1", DeviceIdentifier::usb(1234), "Profile1");
-    let mapping2 = KeyboardMapping::new("KB2", DeviceIdentifier::usb(5678), "Profile2");
-    let config = Config::new("Default", vec![mapping1, mapping2]);
-
-    assert!(config.to_legacy().is_none());
-}
-
-#[test]
 fn test_validate_empty_keyboards() {
     let config = Config::new("Default", vec![]);
     let warnings = config.validate();

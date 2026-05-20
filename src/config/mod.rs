@@ -3,7 +3,6 @@ use crate::error::{AppError, Result};
 use crate::monitor::bluetooth::list_bluetooth_devices;
 use crate::monitor::usb::list_usb_devices;
 use crate::monitor::{DeviceIdentifier, KeyboardMapping};
-use dirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
@@ -118,20 +117,6 @@ impl Config {
             default_profile: legacy.default_profile,
             keyboards: vec![mapping],
         }
-    }
-
-    /// Convert to legacy config if possible (single USB keyboard)
-    pub fn to_legacy(&self) -> Option<LegacyConfig> {
-        if self.keyboards.len() == 1 {
-            if let DeviceIdentifier::Usb { product_id } = &self.keyboards[0].device {
-                return Some(LegacyConfig {
-                    keyboard_id: *product_id,
-                    product_profile: self.keyboards[0].profile.clone(),
-                    default_profile: self.default_profile.clone(),
-                });
-            }
-        }
-        None
     }
 
     pub fn save(&self) -> Result<()> {
