@@ -11,25 +11,19 @@ use crate::monitor::{DeviceEvent, DeviceIdentifier, DeviceMonitor, KeyboardMappi
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-/// Connected device with its associated mapping
 #[derive(Debug, Clone)]
 struct ConnectedDevice {
     identifier: DeviceIdentifier,
     mapping: KeyboardMapping,
 }
 
-/// Combined monitor that handles both USB and Bluetooth devices
 pub struct CombinedMonitor {
-    /// Keyboard mappings configuration
     mappings: Vec<KeyboardMapping>,
-    /// Default profile when no keyboards are connected
     default_profile: String,
-    /// Enable verbose logging
     verbose: bool,
 }
 
 impl CombinedMonitor {
-    /// Create a new combined monitor
     pub fn new(mappings: Vec<KeyboardMapping>, default_profile: impl Into<String>) -> Self {
         CombinedMonitor {
             mappings,
@@ -38,18 +32,11 @@ impl CombinedMonitor {
         }
     }
 
-    /// Enable or disable verbose logging
     pub fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
         self
     }
 
-    /// Find the mapping that matches a device identifier
-    fn find_mapping_for_device(&self, device: &DeviceIdentifier) -> Option<&KeyboardMapping> {
-        self.mappings.iter().find(|m| m.device.matches(device))
-    }
-
-    /// Get the highest priority connected device's profile
     fn get_highest_priority_profile(
         connected: &[ConnectedDevice],
         default_profile: &str,
@@ -61,76 +48,103 @@ impl CombinedMonitor {
             .unwrap_or_else(|| default_profile.to_string())
     }
 
-    /// Start monitoring all configured devices
+    /// Apply `target` via Karabiner only if it differs from the last applied
+    /// profile. Cache lock spans the subprocess call so concurrent USB and
+    /// Bluetooth threads serialize switches and observe a consistent cache.
+    fn apply_target_profile(
+        target: &str,
+        last_applied: &Mutex<Option<String>>,
+        karabiner: &KarabinerController,
+        verbose: bool,
+    ) -> Result<()> {
+        let mut applied = last_applied
+            .lock()
+            .expect("last_applied mutex poisoned");
+        if applied.as_deref() == Some(target) {
+            if verbose {
+                println!("[DEBUG] Profile already '{}', skipping switch", target);
+            }
+            return Ok(());
+        }
+        println!("Switching to profile: {}", target);
+        karabiner.switch_profile(target)?;
+        *applied = Some(target.to_string());
+        Ok(())
+    }
+
     pub fn start_monitoring(&self) -> Result<()> {
         let karabiner = KarabinerController::new();
 
-        // Separate USB and Bluetooth mappings
         let mut usb_product_ids: Vec<u16> = Vec::new();
         let mut bluetooth_names: Vec<String> = Vec::new();
-
         for mapping in &self.mappings {
             match &mapping.device {
-                DeviceIdentifier::Usb { product_id } => {
-                    usb_product_ids.push(*product_id);
-                }
+                DeviceIdentifier::Usb { product_id } => usb_product_ids.push(*product_id),
                 DeviceIdentifier::Bluetooth { device_name } => {
-                    bluetooth_names.push(device_name.clone());
+                    bluetooth_names.push(device_name.clone())
                 }
             }
         }
 
         let mappings = Arc::new(self.mappings.clone());
         let default_profile = Arc::new(self.default_profile.clone());
+        let connected_devices: Arc<Mutex<Vec<ConnectedDevice>>> = Arc::new(Mutex::new(Vec::new()));
+        let last_applied: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let verbose = self.verbose;
 
-        // Track connected devices with their mappings
-        let connected_devices: Arc<Mutex<Vec<ConnectedDevice>>> = Arc::new(Mutex::new(Vec::new()));
-
-        // Create the event handler
         let create_handler = |mappings: Arc<Vec<KeyboardMapping>>,
                               default_profile: Arc<String>,
                               connected_devices: Arc<Mutex<Vec<ConnectedDevice>>>,
+                              last_applied: Arc<Mutex<Option<String>>>,
                               karabiner: KarabinerController,
                               verbose: bool| {
             move |event: DeviceEvent| -> Result<()> {
-                match event {
-                    DeviceEvent::Initial(devices) => {
-                        let mut connected = connected_devices.lock().unwrap();
-
-                        for device in &devices {
-                            if let Some(mapping) =
-                                mappings.iter().find(|m| m.device.matches(device))
-                            {
-                                if verbose {
-                                    println!(
-                                        "[DEBUG] Initial device matched: {} -> {}",
-                                        device.display_name(),
-                                        mapping.name
-                                    );
+                let target_profile: Option<String> = {
+                    let mut connected = connected_devices
+                        .lock()
+                        .expect("connected_devices mutex poisoned");
+                    match event {
+                        DeviceEvent::Initial(devices) => {
+                            for device in &devices {
+                                if let Some(mapping) =
+                                    mappings.iter().find(|m| m.device.matches(device))
+                                {
+                                    if verbose {
+                                        println!(
+                                            "[DEBUG] Initial device matched: {} -> {}",
+                                            device.display_name(),
+                                            mapping.name
+                                        );
+                                    }
+                                    connected.push(ConnectedDevice {
+                                        identifier: device.clone(),
+                                        mapping: mapping.clone(),
+                                    });
                                 }
-                                connected.push(ConnectedDevice {
-                                    identifier: device.clone(),
-                                    mapping: mapping.clone(),
-                                });
+                            }
+                            if connected.is_empty() {
+                                None
+                            } else {
+                                let profile = Self::get_highest_priority_profile(
+                                    &connected,
+                                    &default_profile,
+                                );
+                                println!("Initial device detected, target profile: {}", profile);
+                                Some(profile)
                             }
                         }
-
-                        // Switch to highest priority device's profile
-                        if !connected.is_empty() {
-                            let profile =
-                                Self::get_highest_priority_profile(&connected, &default_profile);
-                            println!(
-                                "Initial device detected, switching to profile: {}",
-                                profile
-                            );
-                            karabiner.switch_profile(&profile)?;
-                        }
-                    }
-                    DeviceEvent::Connected(device) => {
-                        let mut connected = connected_devices.lock().unwrap();
-
-                        if let Some(mapping) = mappings.iter().find(|m| m.device.matches(&device)) {
+                        DeviceEvent::Connected(device) => {
+                            let Some(mapping) =
+                                mappings.iter().find(|m| m.device.matches(&device))
+                            else {
+                                if verbose {
+                                    println!(
+                                        "[DEBUG] Device connected but no matching mapping: {}",
+                                        device.display_name()
+                                    );
+                                }
+                                return Ok(());
+                            };
                             if verbose {
                                 println!(
                                     "[DEBUG] Device matched: {} -> {} (priority: {})",
@@ -139,62 +153,45 @@ impl CombinedMonitor {
                                     mapping.priority
                                 );
                             }
-
                             connected.push(ConnectedDevice {
                                 identifier: device.clone(),
                                 mapping: mapping.clone(),
                             });
-
-                            // Get the highest priority profile among all connected devices
                             let profile =
                                 Self::get_highest_priority_profile(&connected, &default_profile);
                             println!(
-                                "Device connected: {}, switching to profile: {}",
+                                "Device connected: {}, target profile: {}",
                                 device.display_name(),
                                 profile
                             );
-                            karabiner.switch_profile(&profile)?;
-                        } else if verbose {
-                            println!(
-                                "[DEBUG] Device connected but no matching mapping: {}",
-                                device.display_name()
-                            );
+                            Some(profile)
                         }
-                    }
-                    DeviceEvent::Disconnected(device) => {
-                        let mut connected = connected_devices.lock().unwrap();
-
-                        // Remove the disconnected device (using matches for Bluetooth partial matching)
-                        let before_len = connected.len();
-                        connected.retain(|d| !d.identifier.matches(&device));
-                        let removed = before_len != connected.len();
-
-                        if removed {
-                            if connected.is_empty() {
-                                println!(
-                                    "Device disconnected: {}, switching to default profile: {}",
-                                    device.display_name(),
-                                    default_profile
-                                );
-                                karabiner.switch_profile(&default_profile)?;
-                            } else {
-                                // Switch to the highest priority remaining device's profile
-                                let profile =
-                                    Self::get_highest_priority_profile(&connected, &default_profile);
-                                println!(
-                                    "Device disconnected: {}, switching to profile: {} (another device still connected)",
-                                    device.display_name(),
-                                    profile
-                                );
-                                karabiner.switch_profile(&profile)?;
+                        DeviceEvent::Disconnected(device) => {
+                            let before_len = connected.len();
+                            connected.retain(|d| !d.identifier.matches(&device));
+                            if before_len == connected.len() {
+                                if verbose {
+                                    println!(
+                                        "[DEBUG] Device disconnected but was not tracked: {}",
+                                        device.display_name()
+                                    );
+                                }
+                                return Ok(());
                             }
-                        } else if verbose {
+                            let profile =
+                                Self::get_highest_priority_profile(&connected, &default_profile);
                             println!(
-                                "[DEBUG] Device disconnected but was not tracked: {}",
-                                device.display_name()
+                                "Device disconnected: {}, target profile: {}",
+                                device.display_name(),
+                                profile
                             );
+                            Some(profile)
                         }
                     }
+                };
+
+                if let Some(profile) = target_profile {
+                    Self::apply_target_profile(&profile, &last_applied, &karabiner, verbose)?;
                 }
                 Ok(())
             }
@@ -202,42 +199,38 @@ impl CombinedMonitor {
 
         let mut handles = Vec::new();
 
-        // Start USB monitoring if there are USB devices to monitor
         if !usb_product_ids.is_empty() {
             let usb_monitor = UsbMonitor::new(usb_product_ids);
             let handler = create_handler(
                 Arc::clone(&mappings),
                 Arc::clone(&default_profile),
                 Arc::clone(&connected_devices),
+                Arc::clone(&last_applied),
                 karabiner.clone(),
                 verbose,
             );
-
-            let handle = thread::spawn(move || {
+            handles.push(thread::spawn(move || {
                 if let Err(e) = usb_monitor.start_monitoring(handler) {
                     eprintln!("USB monitoring error: {}", e);
                 }
-            });
-            handles.push(handle);
+            }));
         }
 
-        // Start Bluetooth monitoring if there are Bluetooth devices to monitor
         if !bluetooth_names.is_empty() {
             let bluetooth_monitor = BluetoothMonitor::new(bluetooth_names);
             let handler = create_handler(
                 Arc::clone(&mappings),
                 Arc::clone(&default_profile),
                 Arc::clone(&connected_devices),
+                Arc::clone(&last_applied),
                 karabiner.clone(),
                 verbose,
             );
-
-            let handle = thread::spawn(move || {
+            handles.push(thread::spawn(move || {
                 if let Err(e) = bluetooth_monitor.start_monitoring(handler) {
                     eprintln!("Bluetooth monitoring error: {}", e);
                 }
-            });
-            handles.push(handle);
+            }));
         }
 
         if handles.is_empty() {
@@ -250,7 +243,6 @@ impl CombinedMonitor {
         println!("Default profile: {}", self.default_profile);
         println!("Configured mappings (sorted by priority):");
 
-        // Sort and display by priority
         let mut sorted_mappings = self.mappings.clone();
         sorted_mappings.sort_by(|a, b| b.priority.cmp(&a.priority));
         for mapping in &sorted_mappings {
@@ -266,11 +258,10 @@ impl CombinedMonitor {
             println!("[DEBUG] Verbose logging enabled");
         }
 
-        // Wait for all monitoring threads
         for handle in handles {
-            handle
-                .join()
-                .map_err(|_| AppError::UsbDevice("Monitoring thread panicked".to_string()))?;
+            handle.join().map_err(|e| {
+                AppError::Monitor(format!("Monitoring thread panicked: {:?}", e))
+            })?;
         }
 
         Ok(())

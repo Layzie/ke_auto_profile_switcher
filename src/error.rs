@@ -11,6 +11,9 @@ pub enum AppError {
     #[error("Bluetooth device error: {0}")]
     Bluetooth(String),
 
+    #[error("Monitor error: {0}")]
+    Monitor(String),
+
     #[error("Karabiner-Elements error: {0}")]
     Karabiner(String),
 
