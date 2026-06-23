@@ -38,7 +38,8 @@ fn main() -> Result<()> {
 
 /// Start monitoring for keyboard connections
 fn start_monitoring(config: Config, verbose: bool) -> Result<()> {
-    let monitor = CombinedMonitor::new(config.keyboards, config.default_profile).with_verbose(verbose);
+    let monitor =
+        CombinedMonitor::new(config.keyboards, config.default_profile).with_verbose(verbose);
     monitor.start_monitoring()
 }
 

@@ -202,12 +202,8 @@ fn test_keyboard_mapping_default_priority() {
 
 #[test]
 fn test_config_with_priority_serialization() {
-    let mapping = KeyboardMapping::with_priority(
-        "Priority KB",
-        DeviceIdentifier::usb(1234),
-        "Profile",
-        50,
-    );
+    let mapping =
+        KeyboardMapping::with_priority("Priority KB", DeviceIdentifier::usb(1234), "Profile", 50);
     let config = Config::new("Default", vec![mapping]);
 
     let yaml = serde_yaml::to_string(&config).unwrap();
