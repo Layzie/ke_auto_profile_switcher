@@ -1,17 +1,20 @@
 //! Combined device monitoring module.
 //!
-//! Monitors both USB and Bluetooth devices simultaneously,
-//! managing multiple keyboard-profile mappings with priority support.
+//! Monitors USB and Bluetooth keyboards together through a single IOKit
+//! event-driven monitor, managing multiple keyboard-profile mappings with
+//! priority support.
 
 use crate::error::{AppError, Result};
+#[cfg(target_os = "macos")]
 use crate::karabiner::KarabinerController;
-use crate::monitor::bluetooth::BluetoothMonitor;
-use crate::monitor::usb::UsbMonitor;
-use crate::monitor::{DeviceEvent, DeviceIdentifier, DeviceMonitor, KeyboardMapping};
+#[cfg(target_os = "macos")]
+use crate::monitor::{iokit::IoKitMonitor, DeviceEvent, DeviceMonitor};
+use crate::monitor::{DeviceIdentifier, KeyboardMapping};
+#[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct ConnectedDevice {
     identifier: DeviceIdentifier,
     mapping: KeyboardMapping,
@@ -37,6 +40,7 @@ impl CombinedMonitor {
         self
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn get_highest_priority_profile(
         connected: &[ConnectedDevice],
         default_profile: &str,
@@ -49,17 +53,16 @@ impl CombinedMonitor {
     }
 
     /// Apply `target` via Karabiner only if it differs from the last applied
-    /// profile. Cache lock spans the subprocess call so concurrent USB and
-    /// Bluetooth threads serialize switches and observe a consistent cache.
+    /// profile. The cache lock is kept while switching so that concurrent events
+    /// (should they ever overlap) serialize and observe a consistent cache.
+    #[cfg(target_os = "macos")]
     fn apply_target_profile(
         target: &str,
         last_applied: &Mutex<Option<String>>,
         karabiner: &KarabinerController,
         verbose: bool,
     ) -> Result<()> {
-        let mut applied = last_applied
-            .lock()
-            .expect("last_applied mutex poisoned");
+        let mut applied = last_applied.lock().expect("last_applied mutex poisoned");
         if applied.as_deref() == Some(target) {
             if verbose {
                 println!("[DEBUG] Profile already '{}', skipping switch", target);
@@ -73,8 +76,6 @@ impl CombinedMonitor {
     }
 
     pub fn start_monitoring(&self) -> Result<()> {
-        let karabiner = KarabinerController::new();
-
         let mut usb_product_ids: Vec<u16> = Vec::new();
         let mut bluetooth_names: Vec<String> = Vec::new();
         for mapping in &self.mappings {
@@ -86,19 +87,42 @@ impl CombinedMonitor {
             }
         }
 
-        let mappings = Arc::new(self.mappings.clone());
-        let default_profile = Arc::new(self.default_profile.clone());
-        let connected_devices: Arc<Mutex<Vec<ConnectedDevice>>> = Arc::new(Mutex::new(Vec::new()));
-        let last_applied: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let verbose = self.verbose;
+        if usb_product_ids.is_empty() && bluetooth_names.is_empty() {
+            return Err(AppError::Config(
+                "No devices configured for monitoring".to_string(),
+            ));
+        }
 
-        let create_handler = |mappings: Arc<Vec<KeyboardMapping>>,
-                              default_profile: Arc<String>,
-                              connected_devices: Arc<Mutex<Vec<ConnectedDevice>>>,
-                              last_applied: Arc<Mutex<Option<String>>>,
-                              karabiner: KarabinerController,
-                              verbose: bool| {
-            move |event: DeviceEvent| -> Result<()> {
+        println!("Monitoring started. Press Ctrl+C to stop.");
+        println!("Default profile: {}", self.default_profile);
+        println!("Configured mappings (sorted by priority):");
+
+        let mut sorted_mappings = self.mappings.clone();
+        sorted_mappings.sort_by(|a, b| b.priority.cmp(&a.priority));
+        for mapping in &sorted_mappings {
+            println!(
+                "  - {} [priority: {}] -> Profile: {}",
+                mapping.device.display_name(),
+                mapping.priority,
+                mapping.profile
+            );
+        }
+
+        if self.verbose {
+            println!("[DEBUG] Verbose logging enabled");
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let karabiner = KarabinerController::new();
+            let mappings = Arc::new(self.mappings.clone());
+            let default_profile = Arc::new(self.default_profile.clone());
+            let connected_devices: Arc<Mutex<Vec<ConnectedDevice>>> =
+                Arc::new(Mutex::new(Vec::new()));
+            let last_applied: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let verbose = self.verbose;
+
+            let handler = move |event: DeviceEvent| -> Result<()> {
                 let target_profile: Option<String> = {
                     let mut connected = connected_devices
                         .lock()
@@ -134,8 +158,7 @@ impl CombinedMonitor {
                             }
                         }
                         DeviceEvent::Connected(device) => {
-                            let Some(mapping) =
-                                mappings.iter().find(|m| m.device.matches(&device))
+                            let Some(mapping) = mappings.iter().find(|m| m.device.matches(&device))
                             else {
                                 if verbose {
                                     println!(
@@ -194,77 +217,19 @@ impl CombinedMonitor {
                     Self::apply_target_profile(&profile, &last_applied, &karabiner, verbose)?;
                 }
                 Ok(())
-            }
-        };
+            };
 
-        let mut handles = Vec::new();
-
-        if !usb_product_ids.is_empty() {
-            let usb_monitor = UsbMonitor::new(usb_product_ids);
-            let handler = create_handler(
-                Arc::clone(&mappings),
-                Arc::clone(&default_profile),
-                Arc::clone(&connected_devices),
-                Arc::clone(&last_applied),
-                karabiner.clone(),
-                verbose,
-            );
-            handles.push(thread::spawn(move || {
-                if let Err(e) = usb_monitor.start_monitoring(handler) {
-                    eprintln!("USB monitoring error: {}", e);
-                }
-            }));
+            let monitor = IoKitMonitor::new(usb_product_ids, bluetooth_names);
+            monitor.start_monitoring(handler)
         }
 
-        if !bluetooth_names.is_empty() {
-            let bluetooth_monitor = BluetoothMonitor::new(bluetooth_names);
-            let handler = create_handler(
-                Arc::clone(&mappings),
-                Arc::clone(&default_profile),
-                Arc::clone(&connected_devices),
-                Arc::clone(&last_applied),
-                karabiner.clone(),
-                verbose,
-            );
-            handles.push(thread::spawn(move || {
-                if let Err(e) = bluetooth_monitor.start_monitoring(handler) {
-                    eprintln!("Bluetooth monitoring error: {}", e);
-                }
-            }));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (usb_product_ids, bluetooth_names);
+            Err(AppError::Monitor(
+                "Device monitoring requires macOS (Karabiner-Elements is macOS-only)".to_string(),
+            ))
         }
-
-        if handles.is_empty() {
-            return Err(AppError::Config(
-                "No devices configured for monitoring".to_string(),
-            ));
-        }
-
-        println!("Monitoring started. Press Ctrl+C to stop.");
-        println!("Default profile: {}", self.default_profile);
-        println!("Configured mappings (sorted by priority):");
-
-        let mut sorted_mappings = self.mappings.clone();
-        sorted_mappings.sort_by(|a, b| b.priority.cmp(&a.priority));
-        for mapping in &sorted_mappings {
-            println!(
-                "  - {} [priority: {}] -> Profile: {}",
-                mapping.device.display_name(),
-                mapping.priority,
-                mapping.profile
-            );
-        }
-
-        if self.verbose {
-            println!("[DEBUG] Verbose logging enabled");
-        }
-
-        for handle in handles {
-            handle.join().map_err(|e| {
-                AppError::Monitor(format!("Monitoring thread panicked: {:?}", e))
-            })?;
-        }
-
-        Ok(())
     }
 }
 

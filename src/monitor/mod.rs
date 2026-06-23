@@ -5,6 +5,8 @@
 
 pub mod bluetooth;
 pub mod combined;
+#[cfg(target_os = "macos")]
+pub mod iokit;
 pub mod usb;
 
 use crate::error::Result;
@@ -60,7 +62,6 @@ impl DeviceIdentifier {
             _ => false,
         }
     }
-
 }
 
 /// Configuration for a single keyboard-profile mapping

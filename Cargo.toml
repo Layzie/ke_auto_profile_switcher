@@ -17,7 +17,6 @@ name = "kaps"
 path = "src/main.rs"
 
 [dependencies]
-usb_enumeration = "0.2.1"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
@@ -26,12 +25,17 @@ dirs = "5.0"
 thiserror = "1.0"
 anyhow = "1.0"
 
-# macOS Bluetooth support (IOKit/HIDManager)
+# macOS IOKit event-driven device monitoring (USB + Bluetooth via
+# IOServiceAddMatchingNotification; metadata only, no Input Monitoring).
+[target.'cfg(target_os = "macos")'.dependencies]
+io-kit-sys = "0.4"
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-io-kit-sys = "0.4"
-
 [dev-dependencies]
 tempfile = "3.8"
+
+# Karabiner-Elements is macOS-only; build docs.rs against a macOS target so the
+# IOKit-gated modules compile there.
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"

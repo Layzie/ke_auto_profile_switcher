@@ -1,278 +1,166 @@
-//! Bluetooth device monitoring module.
+//! Bluetooth device listing for the `check` command.
 //!
-//! Monitors Bluetooth HID devices (keyboards) on macOS using IOKit/HIDManager.
-//! Falls back to system_profiler polling if IOKit is not available.
+//! Live Bluetooth keyboard monitoring is handled by the unified IOKit monitor
+//! (`crate::monitor::iokit`). This module only provides the one-shot snapshot
+//! listing used by `kaps check`, which queries
+//! `system_profiler SPBluetoothDataType`.
 
-use crate::constants::BLUETOOTH_POLL_INTERVAL_SECONDS;
 use crate::error::{AppError, Result};
-use crate::monitor::{DeviceEvent, DeviceIdentifier, DeviceInfo, DeviceMonitor};
-use std::collections::HashSet;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-/// Maximum number of retries for system_profiler command
+/// Maximum number of retries for the system_profiler command.
 const MAX_RETRIES: u32 = 3;
-/// Initial delay between retries (will be exponentially increased)
+/// Initial delay between retries (exponentially increased).
 const RETRY_DELAY_MS: u64 = 500;
 
-/// Monitor for Bluetooth keyboard connections
-pub struct BluetoothMonitor {
-    /// Device names to monitor
-    device_names: Vec<String>,
-}
-
-impl BluetoothMonitor {
-    pub fn new(device_names: Vec<String>) -> Self {
-        BluetoothMonitor { device_names }
-    }
-
-    fn get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
-        Self::get_connected_devices_with_retry(MAX_RETRIES)
-    }
-
-    /// Get connected devices with specified number of retries
-    fn get_connected_devices_with_retry(max_retries: u32) -> Result<Vec<BluetoothDeviceInfo>> {
-        let mut last_error = None;
-        let mut delay = Duration::from_millis(RETRY_DELAY_MS);
-
-        for attempt in 0..=max_retries {
-            match Self::try_get_connected_devices() {
-                Ok(devices) => return Ok(devices),
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < max_retries {
-                        thread::sleep(delay);
-                        delay *= 2; // Exponential backoff
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            AppError::Bluetooth("Failed to get Bluetooth devices after retries".to_string())
-        }))
-    }
-
-    /// Try to get connected devices (single attempt)
-    fn try_get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
-        let output = Command::new("system_profiler")
-            .args(["SPBluetoothDataType", "-json"])
-            .output()
-            .map_err(|e| AppError::Bluetooth(format!("Failed to run system_profiler: {}", e)))?;
-
-        if !output.status.success() {
-            return Err(AppError::Bluetooth(
-                "system_profiler command failed".to_string(),
-            ));
-        }
-
-        Self::parse_bluetooth_json(&output.stdout)
-    }
-
-    /// Parse the JSON output from system_profiler
-    fn parse_bluetooth_json(json_bytes: &[u8]) -> Result<Vec<BluetoothDeviceInfo>> {
-        let json: serde_json::Value = serde_json::from_slice(json_bytes)
-            .map_err(|e| AppError::Bluetooth(format!("Failed to parse JSON: {}", e)))?;
-
-        let mut devices = Vec::new();
-
-        // Navigate the JSON structure to find connected devices
-        if let Some(bluetooth_data) = json.get("SPBluetoothDataType").and_then(|v| v.as_array()) {
-            for controller in bluetooth_data {
-                // Check for connected devices in various locations
-                // Structure varies by macOS version
-
-                // Try "device_connected" (older macOS)
-                if let Some(connected) = controller
-                    .get("device_connected")
-                    .and_then(|v| v.as_array())
-                {
-                    for device in connected {
-                        if let Some(device_obj) = device.as_object() {
-                            for (name, info) in device_obj {
-                                let address = info
-                                    .get("device_address")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-
-                                let is_keyboard = info
-                                    .get("device_minorType")
-                                    .and_then(|v| v.as_str())
-                                    .map(|t| t.to_ascii_lowercase().contains("keyboard"))
-                                    .unwrap_or(false);
-
-                                devices.push(BluetoothDeviceInfo {
-                                    name: name.clone(),
-                                    address,
-                                    connected: true,
-                                    is_keyboard,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // Try "device_title" -> devices (newer macOS)
-                if let Some(device_title) =
-                    controller.get("device_title").and_then(|v| v.as_array())
-                {
-                    for section in device_title {
-                        if let Some(section_devices) =
-                            section.get("_items").and_then(|v| v.as_array())
-                        {
-                            for device in section_devices {
-                                let name = device
-                                    .get("_name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("Unknown")
-                                    .to_string();
-
-                                let address = device
-                                    .get("device_address")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-
-                                let connected = device
-                                    .get("device_connected")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s == "attrib_Yes" || s.eq_ignore_ascii_case("yes"))
-                                    .unwrap_or(false);
-
-                                let is_keyboard = device
-                                    .get("device_minorType")
-                                    .and_then(|v| v.as_str())
-                                    .map(|t| t.to_ascii_lowercase().contains("keyboard"))
-                                    .unwrap_or(false);
-
-                                devices.push(BluetoothDeviceInfo {
-                                    name,
-                                    address,
-                                    connected,
-                                    is_keyboard,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(devices)
-    }
-
-    fn matches_device(&self, device_name: &str) -> bool {
-        let device_lower = device_name.to_ascii_lowercase();
-        self.device_names
-            .iter()
-            .any(|name| device_lower.contains(&name.to_ascii_lowercase()))
-    }
-}
-
-/// Internal Bluetooth device info
+/// Internal Bluetooth device info.
 #[derive(Debug, Clone)]
 struct BluetoothDeviceInfo {
     name: String,
     #[allow(dead_code)]
     address: String,
     connected: bool,
-    #[allow(dead_code)]
     is_keyboard: bool,
 }
 
-impl DeviceMonitor for BluetoothMonitor {
-    fn start_monitoring<F>(&self, callback: F) -> Result<()>
-    where
-        F: Fn(DeviceEvent) -> Result<()> + Send + Sync + 'static,
-    {
-        // If no device names to monitor, return early
-        if self.device_names.is_empty() {
-            return Ok(());
+fn get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
+    get_connected_devices_with_retry(MAX_RETRIES)
+}
+
+/// Get connected devices with the specified number of retries.
+fn get_connected_devices_with_retry(max_retries: u32) -> Result<Vec<BluetoothDeviceInfo>> {
+    let mut last_error = None;
+    let mut delay = Duration::from_millis(RETRY_DELAY_MS);
+
+    for attempt in 0..=max_retries {
+        match try_get_connected_devices() {
+            Ok(devices) => return Ok(devices),
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < max_retries {
+                    thread::sleep(delay);
+                    delay *= 2; // Exponential backoff
+                }
+            }
         }
+    }
 
-        let poll_interval = Duration::from_secs(BLUETOOTH_POLL_INTERVAL_SECONDS);
-        let mut previously_connected: HashSet<String> = HashSet::new();
-        let mut is_initial = true;
+    Err(last_error.unwrap_or_else(|| {
+        AppError::Bluetooth("Failed to get Bluetooth devices after retries".to_string())
+    }))
+}
 
-        loop {
-            match Self::get_connected_devices() {
-                Ok(devices) => {
-                    // Filter to devices we're monitoring that are connected
-                    let currently_connected: HashSet<String> = devices
-                        .iter()
-                        .filter(|d| d.connected && self.matches_device(&d.name))
-                        .map(|d| d.name.clone())
-                        .collect();
+/// Try to get connected devices (single attempt).
+fn try_get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
+    let output = Command::new("system_profiler")
+        .args(["SPBluetoothDataType", "-json"])
+        .output()
+        .map_err(|e| AppError::Bluetooth(format!("Failed to run system_profiler: {}", e)))?;
 
-                    if is_initial {
-                        // Report initial state
-                        if !currently_connected.is_empty() {
-                            let identifiers: Vec<DeviceIdentifier> = currently_connected
-                                .iter()
-                                .map(|name| DeviceIdentifier::bluetooth(name.clone()))
-                                .collect();
-                            callback(DeviceEvent::Initial(identifiers)).map_err(|e| {
-                                AppError::Bluetooth(format!(
-                                    "Failed to handle initial devices: {}",
-                                    e
-                                ))
-                            })?;
-                        }
-                        is_initial = false;
-                    } else {
-                        // Check for newly connected devices
-                        for name in currently_connected.difference(&previously_connected) {
-                            println!("Bluetooth device connected: {}", name);
-                            let identifier = DeviceIdentifier::bluetooth(name.clone());
-                            callback(DeviceEvent::Connected(identifier)).map_err(|e| {
-                                AppError::Bluetooth(format!(
-                                    "Failed to handle device connection: {}",
-                                    e
-                                ))
-                            })?;
-                        }
+    if !output.status.success() {
+        return Err(AppError::Bluetooth(
+            "system_profiler command failed".to_string(),
+        ));
+    }
 
-                        // Check for disconnected devices
-                        for name in previously_connected.difference(&currently_connected) {
-                            println!("Bluetooth device disconnected: {}", name);
-                            let identifier = DeviceIdentifier::bluetooth(name.clone());
-                            callback(DeviceEvent::Disconnected(identifier)).map_err(|e| {
-                                AppError::Bluetooth(format!(
-                                    "Failed to handle device disconnection: {}",
-                                    e
-                                ))
-                            })?;
+    parse_bluetooth_json(&output.stdout)
+}
+
+/// Parse the JSON output from system_profiler.
+fn parse_bluetooth_json(json_bytes: &[u8]) -> Result<Vec<BluetoothDeviceInfo>> {
+    let json: serde_json::Value = serde_json::from_slice(json_bytes)
+        .map_err(|e| AppError::Bluetooth(format!("Failed to parse JSON: {}", e)))?;
+
+    let mut devices = Vec::new();
+
+    // Navigate the JSON structure to find connected devices.
+    if let Some(bluetooth_data) = json.get("SPBluetoothDataType").and_then(|v| v.as_array()) {
+        for controller in bluetooth_data {
+            // Check for connected devices in various locations.
+            // Structure varies by macOS version.
+
+            // Try "device_connected" (older macOS).
+            if let Some(connected) = controller
+                .get("device_connected")
+                .and_then(|v| v.as_array())
+            {
+                for device in connected {
+                    if let Some(device_obj) = device.as_object() {
+                        for (name, info) in device_obj {
+                            let address = info
+                                .get("device_address")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+
+                            let is_keyboard = info
+                                .get("device_minorType")
+                                .and_then(|v| v.as_str())
+                                .map(|t| t.to_ascii_lowercase().contains("keyboard"))
+                                .unwrap_or(false);
+
+                            devices.push(BluetoothDeviceInfo {
+                                name: name.clone(),
+                                address,
+                                connected: true,
+                                is_keyboard,
+                            });
                         }
                     }
-
-                    previously_connected = currently_connected;
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to get Bluetooth devices: {}", e);
                 }
             }
 
-            thread::sleep(poll_interval);
+            // Try "device_title" -> devices (newer macOS).
+            if let Some(device_title) = controller.get("device_title").and_then(|v| v.as_array()) {
+                for section in device_title {
+                    if let Some(section_devices) = section.get("_items").and_then(|v| v.as_array())
+                    {
+                        for device in section_devices {
+                            let name = device
+                                .get("_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown")
+                                .to_string();
+
+                            let address = device
+                                .get("device_address")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+
+                            let connected = device
+                                .get("device_connected")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s == "attrib_Yes" || s.eq_ignore_ascii_case("yes"))
+                                .unwrap_or(false);
+
+                            let is_keyboard = device
+                                .get("device_minorType")
+                                .and_then(|v| v.as_str())
+                                .map(|t| t.to_ascii_lowercase().contains("keyboard"))
+                                .unwrap_or(false);
+
+                            devices.push(BluetoothDeviceInfo {
+                                name,
+                                address,
+                                connected,
+                                is_keyboard,
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 
-    fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
-        let devices = Self::get_connected_devices()?;
-        Ok(devices
-            .into_iter()
-            .map(|d| {
-                let identifier = DeviceIdentifier::bluetooth(d.name.clone());
-                DeviceInfo::new(identifier, d.name, d.connected)
-            })
-            .collect())
-    }
+    Ok(devices)
 }
 
-/// List all Bluetooth devices (for the check command)
+/// List all Bluetooth devices (for the `check` command).
 pub fn list_bluetooth_devices() -> Result<()> {
-    let devices = BluetoothMonitor::get_connected_devices()?;
+    let devices = get_connected_devices()?;
 
     if devices.is_empty() {
         println!("No Bluetooth devices found.");
@@ -298,4 +186,42 @@ pub fn list_bluetooth_devices() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_device_title_section() {
+        let json = br#"{
+            "SPBluetoothDataType": [
+                {
+                    "device_title": [
+                        {
+                            "_items": [
+                                {
+                                    "_name": "Magic Keyboard",
+                                    "device_address": "AA-BB-CC",
+                                    "device_connected": "attrib_Yes",
+                                    "device_minorType": "Keyboard"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let devices = parse_bluetooth_json(json).expect("parse");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "Magic Keyboard");
+        assert!(devices[0].connected);
+        assert!(devices[0].is_keyboard);
+    }
+
+    #[test]
+    fn parses_empty_when_no_bluetooth_data() {
+        let devices = parse_bluetooth_json(b"{}").expect("parse");
+        assert!(devices.is_empty());
+    }
 }
