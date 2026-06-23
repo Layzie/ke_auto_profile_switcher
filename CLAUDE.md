@@ -26,12 +26,13 @@ The application follows a modular architecture with clear separation of concerns
 - **`src/cli.rs`**: CLI argument definitions and parsing structures
 - **`src/monitor/`**: Device monitoring module (USB and Bluetooth)
   - `mod.rs`: Common traits (`DeviceMonitor`) and types (`DeviceIdentifier`, `KeyboardMapping`, `DeviceEvent`)
-  - `usb.rs`: USB device enumeration and event monitoring using `usb_enumeration` crate
-  - `bluetooth.rs`: Bluetooth device monitoring using macOS `system_profiler`
-  - `combined.rs`: Combined monitor for simultaneous USB and Bluetooth monitoring
+  - `iokit.rs`: Unified IOKit event-driven monitor (`IoKitMonitor`) watching USB + Bluetooth keyboards via `IOServiceAddMatchingNotification` on the `IOHIDDevice` service class (macOS only); also provides USB enumeration for `check`
+  - `usb.rs`: Thin shim — USB device listing for the `check` command (delegates to `iokit::list_usb_devices` on macOS)
+  - `bluetooth.rs`: Bluetooth device listing for the `check` command using macOS `system_profiler` (snapshot only; not used by `watch`)
+  - `combined.rs`: Drives a single `IoKitMonitor`, applying priority-based profile mappings
 - **`src/karabiner.rs`**: Karabiner-Elements CLI integration and profile switching
 - **`src/error.rs`**: Custom error types (`AppError`) with proper error chaining
-- **`src/constants.rs`**: Centralized application constants (paths, defaults, intervals)
+- **`src/constants.rs`**: Centralized application constants (paths, defaults)
 
 ### Key Architecture Patterns
 
@@ -114,11 +115,12 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 ## Dependencies
 
 - **Core functionality**:
-  - `usb_enumeration`: USB device monitoring and events
   - `clap`: CLI argument parsing with derive features
   - `serde` + `serde_yaml` + `serde_json`: Configuration and data serialization
   - `dirs`: System directory location
-  - `core-foundation` + `core-foundation-sys`: macOS system integration
+- **macOS device monitoring** (`[target.'cfg(target_os = "macos")'.dependencies]`):
+  - `io-kit-sys`: IOKit FFI for event-driven device monitoring (`IOServiceAddMatchingNotification`)
+  - `core-foundation` + `core-foundation-sys`: Core Foundation types (CFRunLoop, CFString, CFNumber) for the IOKit monitor
 - **Error handling**:
   - `thiserror`: Custom error type derivation
   - `anyhow`: Error context (imported but minimal usage)
@@ -129,7 +131,8 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 
 - **macOS specific**: Uses hardcoded path to Karabiner-Elements CLI defined in `src/constants.rs`
 - **Requires Karabiner-Elements** to be installed on the system
-- **Bluetooth monitoring**: Uses macOS `system_profiler SPBluetoothDataType` for Bluetooth device detection
+- **Device monitoring (`watch`)**: True event-driven via IOKit `IOServiceAddMatchingNotification` on `IOHIDDevice`. Reads only IORegistry metadata (never opens the device), so it does **not** require the Input Monitoring permission. No polling.
+- **Device listing (`check`)**: One-shot snapshot — USB via IOKit, Bluetooth via macOS `system_profiler SPBluetoothDataType`
 - **Rust Edition**: Uses Rust 2021 edition
 
 ## Development Guidelines

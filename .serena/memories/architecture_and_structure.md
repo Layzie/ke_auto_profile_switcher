@@ -11,9 +11,10 @@ The application follows a modular architecture with clear separation of concerns
 - **`src/cli.rs`**: CLI argument definitions and parsing structures (clap-based)
 - **`src/monitor/`**: Device monitoring module
   - `mod.rs`: Common traits (`DeviceMonitor`) and types (`DeviceIdentifier`, `KeyboardMapping`, `DeviceEvent`, `DeviceInfo`)
-  - `usb.rs`: USB device enumeration and event monitoring using `usb_enumeration` crate
-  - `bluetooth.rs`: Bluetooth device monitoring using macOS `system_profiler` command
-  - `combined.rs`: Combined monitor for simultaneous USB and Bluetooth monitoring with thread management
+  - `iokit.rs`: Unified IOKit event-driven monitor (`IoKitMonitor`) for USB + Bluetooth via `IOServiceAddMatchingNotification` on `IOHIDDevice` (macOS only)
+  - `usb.rs`: USB device listing for the `check` command (IOKit `IOUSBHostDevice` enumeration)
+  - `bluetooth.rs`: Bluetooth device listing for the `check` command using macOS `system_profiler`
+  - `combined.rs`: Drives a single `IoKitMonitor`, applying priority-based profile mappings
 - **`src/karabiner.rs`**: Karabiner-Elements CLI integration and profile switching
 - **`src/error.rs`**: Custom error types (`AppError`) with proper error chaining
 - **`src/constants.rs`**: Centralized application constants (paths, defaults, intervals)
@@ -30,11 +31,12 @@ The application follows a modular architecture with clear separation of concerns
 - **`DeviceMonitor` trait**: Unified interface for USB and Bluetooth monitoring
 - **`DeviceIdentifier` enum**: Distinguishes between USB (product_id) and Bluetooth (device_name) devices
 - **`KeyboardMapping` struct**: Maps device identifiers to profile names
-- **`CombinedMonitor`**: Orchestrates multiple monitors in separate threads
+- **`CombinedMonitor`**: Drives a single `IoKitMonitor` on the calling thread's CFRunLoop
 
 ### Event-Driven Monitoring
-- **USB**: Real-time event-driven monitoring using `usb_enumeration` crate
-- **Bluetooth**: Polling-based monitoring using `system_profiler SPBluetoothDataType`
+- **Unified IOKit monitor**: USB and Bluetooth keyboards are watched together via `IOServiceAddMatchingNotification` on the `IOHIDDevice` class (first-match + terminated). Real-time, no polling.
+- **No Input Monitoring permission**: Only IORegistry metadata is read; the HID device is never opened (`IOHIDManagerOpen` is avoided).
+- **Disconnect lookup**: connect-time `IORegistryEntryGetRegistryEntryID` → `DeviceIdentifier` map, reverse-looked-up on terminate (properties may be gone at removal).
 - **Callback-based design**: Allows flexible response to device events
 - **Event types**: `Initial`, `Connected`, `Disconnected`
 
@@ -51,5 +53,5 @@ The application follows a modular architecture with clear separation of concerns
 - **Backward compatibility tests**: Ensures legacy config format still works
 
 ### Concurrency in CombinedMonitor
-- **State lock (`connected_devices: Mutex<Vec<ConnectedDevice>>`)**: スコープを限定し、`karabiner_cli` サブプロセス呼び出しの前にドロップする。USB と Bluetooth のスレッド間で event handler が互いをブロックしないようにするため。
-- **Apply cache (`last_applied: Mutex<Option<String>>`)**: 直前に適用したプロファイル名を保持し、同じプロファイルへの重複 switch を抑止する。`apply_target_profile` がこのロックを保持したまま subprocess を呼ぶことで、プロファイル切替自体は直列化される（複数スレッドが同時に Karabiner を叩くことはない）。
+- **Single CFRunLoop thread**: `IoKitMonitor` がすべてのイベントを単一スレッド上で直列に配信するため、handler は並行実行されない。`Arc<Mutex<...>>` の共有状態はインタフェース安定のため残しているが、実質的に競合しない。
+- **Apply cache (`last_applied: Mutex<Option<String>>`)**: 直前に適用したプロファイル名を保持し、同じプロファイルへの重複 switch を抑止する。`apply_target_profile` がこのロックを保持したまま subprocess を呼ぶ。

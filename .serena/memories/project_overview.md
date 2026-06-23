@@ -7,9 +7,8 @@ This is a Rust CLI tool called `kaps` (Karabiner Auto Profile Switcher) that aut
 - **Language**: Rust (edition 2021)
 - **CLI Framework**: clap with derive features
 - **Configuration**: serde + serde_yaml + serde_json for config and data serialization
-- **USB Monitoring**: usb_enumeration crate
-- **Bluetooth Monitoring**: macOS system_profiler command
-- **macOS Integration**: core-foundation, core-foundation-sys
+- **Device Monitoring**: IOKit event-driven (io-kit-sys + core-foundation + core-foundation-sys), unified for USB + Bluetooth via IOServiceAddMatchingNotification on IOHIDDevice (macOS-target only)
+- **Bluetooth listing (`check`)**: macOS system_profiler command
 - **Error Handling**: thiserror for custom error types, anyhow for error context
 - **Testing**: tempfile for filesystem tests
 
@@ -18,7 +17,7 @@ This is a Rust CLI tool called `kaps` (Karabiner Auto Profile Switcher) that aut
 - Support for both USB and Bluetooth keyboards
 - Multiple keyboard-profile mappings
 - Multiple configuration methods (config file, CLI args, interactive setup)
-- Event-driven device monitoring (USB real-time, Bluetooth polling)
+- True event-driven device monitoring for both USB and Bluetooth via IOKit (no polling, no Input Monitoring permission)
 - Priority-based configuration resolution
 - Backward compatible with legacy single-keyboard configuration
 

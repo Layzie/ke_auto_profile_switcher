@@ -8,6 +8,7 @@ This CLI automatically switches [Karabiner-Elements](https://karabiner-elements.
 
 - **Automatic Profile Switching**: Seamlessly switches between Karabiner profiles based on keyboard connection
 - **USB & Bluetooth Support**: Monitor both USB and Bluetooth keyboards
+- **True Event-Driven Monitoring**: USB and Bluetooth are watched through IOKit notifications (no polling, instant response) and require no Input Monitoring permission
 - **Multiple Keyboard Support**: Configure different profiles for different keyboards
 - **Priority-Based Profile Selection**: When multiple keyboards are connected, the one with the highest priority is used
 - **Idempotent Profile Switching**: Skips redundant `karabiner_cli` invocations when the target profile is already active
@@ -216,9 +217,9 @@ default_profile: "Default"
 
 ## How It Works
 
-- **USB Monitoring**: Uses the `usb_enumeration` crate for real-time USB device monitoring
-- **Bluetooth Monitoring**: Polls macOS `system_profiler SPBluetoothDataType -json` to detect Bluetooth device connections (with automatic retry on failure)
-- **Combined Monitoring**: USB and Bluetooth devices are monitored in separate threads sharing a single connected-device state
+- **Event-Driven Monitoring**: USB and Bluetooth keyboards are watched together by a single IOKit monitor that registers `IOServiceAddMatchingNotification` on the `IOHIDDevice` service class. Connect/disconnect events arrive in real time on a CFRunLoop — no polling.
+- **No Input Monitoring permission**: Only IORegistry metadata (product id, name, transport, HID usage) is read; the HID device is never opened with `IOHIDManagerOpen`, so macOS does not prompt for Input Monitoring access.
+- **Device Detection (`check`)**: The `check` command takes a one-shot snapshot — USB via IOKit, Bluetooth via `system_profiler SPBluetoothDataType -json` (with automatic retry).
 - **Priority-Based Selection**: When multiple keyboards are connected, the one with the highest `priority` value is used (defaults to 0 when omitted)
 - **Partial Name Matching**: Bluetooth devices are matched using case-insensitive bidirectional substring matching, so a config name like `"HHKB"` matches the system-reported `"HHKB-BT"`. Conversely, a too-generic name may match unrelated devices — be specific.
 - **Idempotent Profile Switching**: Each event recomputes the target profile, but `karabiner_cli` is only invoked when the target actually changes — this avoids spurious switches when several events resolve to the same profile
@@ -227,6 +228,7 @@ default_profile: "Default"
 
 - macOS with [Karabiner-Elements](https://karabiner-elements.pqrs.org/) installed
 - The application assumes Karabiner-Elements is installed in the default location (`/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli`)
+- No extra system permissions are required — device monitoring reads IOKit metadata only and does not request Input Monitoring access
 - Rust toolchain (edition 2021) when building from source
 
 ## LICENSE
