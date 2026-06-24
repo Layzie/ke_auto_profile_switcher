@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Rust CLI tool called `kaps` (Karabiner Auto Profile Switcher) that automatically switches Karabiner-Elements profiles based on USB keyboard connection status. The tool monitors USB device events and switches between configured profiles when external keyboards are connected or disconnected.
+This is a Rust CLI tool called `kaps` (Karabiner Auto Profile Switcher) that automatically switches Karabiner-Elements profiles based on keyboard connection status. The tool monitors both **USB** and **Bluetooth** device events and switches between configured profiles when external keyboards are connected or disconnected. It supports multiple keyboards with different profile mappings.
 
 ## Architecture
 
@@ -16,23 +16,29 @@ The application follows a modular architecture with clear separation of concerns
 - **Modular Design**: Code is organized into focused modules in `src/lib.rs`
 - **Error Handling**: Custom error types with `thiserror` for detailed error reporting
 - **Configuration Management**: Multiple configuration sources with priority: config file → CLI args → interactive setup
-- **USB Monitoring**: Event-driven USB device monitoring with callback-based profile switching
+- **Device Monitoring**: Event-driven USB and Bluetooth device monitoring with callback-based profile switching
 - **CLI Interface**: Built with `clap` for comprehensive command-line argument parsing
 
 ### Module Structure
 
-- **`src/main.rs`**: Minimal entry point (51 lines) - orchestrates CLI parsing and delegates to modules
+- **`src/main.rs`**: Minimal entry point - orchestrates CLI parsing and delegates to modules
 - **`src/config/`**: Configuration management with YAML serialization, interactive setup, and comprehensive tests
 - **`src/cli.rs`**: CLI argument definitions and parsing structures
-- **`src/usb_monitor.rs`**: USB device enumeration and event monitoring with callback support
+- **`src/monitor/`**: Device monitoring module (USB and Bluetooth)
+  - `mod.rs`: Common traits (`DeviceMonitor`) and types (`DeviceIdentifier`, `KeyboardMapping`, `DeviceEvent`)
+  - `iokit.rs`: Unified IOKit event-driven monitor (`IoKitMonitor`) watching USB + Bluetooth keyboards via `IOServiceAddMatchingNotification` on the `IOHIDDevice` service class (macOS only); also provides USB enumeration for `check`
+  - `usb.rs`: Thin shim — USB device listing for the `check` command (delegates to `iokit::list_usb_devices` on macOS)
+  - `bluetooth.rs`: Bluetooth device listing for the `check` command using macOS `system_profiler` (snapshot only; not used by `watch`)
+  - `combined.rs`: Drives a single `IoKitMonitor`, applying priority-based profile mappings
 - **`src/karabiner.rs`**: Karabiner-Elements CLI integration and profile switching
 - **`src/error.rs`**: Custom error types (`AppError`) with proper error chaining
-- **`src/constants.rs`**: Centralized application constants (paths, defaults, intervals)
+- **`src/constants.rs`**: Centralized application constants (paths, defaults)
 
 ### Key Architecture Patterns
 
 - **Configuration Resolution**: `resolve_config()` function implements priority-based config sourcing
-- **Event-Driven USB Monitoring**: Callback-based design allows flexible response to USB events
+- **Device Monitor Trait**: `DeviceMonitor` trait provides unified interface for USB and Bluetooth monitoring
+- **Event-Driven Monitoring**: Callback-based design allows flexible response to device events
 - **Error Propagation**: Custom `Result<T>` type throughout for consistent error handling
 - **Modular Testing**: Each module has dedicated test suites with `tempfile` for filesystem testing
 
@@ -43,9 +49,11 @@ The application follows a modular architecture with clear separation of concerns
 cargo build
 
 # Run in development
-cargo run -- check                    # List USB devices
+cargo run -- check                    # List all devices (USB and Bluetooth)
+cargo run -- check -t usb             # List USB devices only
+cargo run -- check -t bluetooth       # List Bluetooth devices only
 cargo run -- watch                    # Start monitoring (interactive setup if no config)
-cargo run -- watch -k 1234 -p "External" -d "Default"  # With CLI args
+cargo run -- watch -k 1234 -p "External" -d "Default"  # With CLI args (legacy)
 
 # Build release version
 cargo build --release
@@ -74,10 +82,27 @@ cargo run -- watch --help          # Show watch command help
 The application supports three configuration methods with the following priority:
 
 1. **Config file** (highest): `~/.config/ke_auto_profile_switcher/config.yml`
-2. **CLI arguments**: When keyboard-id and product-profile are provided
+2. **CLI arguments**: When keyboard-id and product-profile are provided (legacy USB-only)
 3. **Interactive setup** (lowest): Guided setup when neither config file nor complete CLI args exist
 
-### Config File Format
+### Config File Format (Version 2 - Recommended)
+```yaml
+version: 2
+default_profile: "Default"
+keyboards:
+  - name: "USB Keyboard"
+    device:
+      type: usb
+      product_id: 1234
+    profile: "USB Profile"
+  - name: "Magic Keyboard"
+    device:
+      type: bluetooth
+      device_name: "Magic Keyboard"
+    profile: "Bluetooth Profile"
+```
+
+### Legacy Config File Format (Version 1 - Still Supported)
 ```yaml
 keyboard_id: 1234  # USB product ID of the external keyboard
 product_profile: "External Keyboard"  # Profile name when keyboard is connected
@@ -85,17 +110,30 @@ default_profile: "Default"  # Profile name when keyboard is disconnected
 ```
 
 ### Configuration Resolution
-The `resolve_config()` function in `src/config/mod.rs` implements the priority logic and handles interactive setup when needed.
+The `resolve_config()` function in `src/config/mod.rs` implements the priority logic and handles interactive setup when needed. It automatically converts legacy v1 config to v2 format internally.
 
 ## Dependencies
 
-詳細は`Cargo.toml`を参照。主要な依存: `usb_enumeration`(USB監視), `clap`(CLI), `serde`+`serde_yaml`(設定), `thiserror`(エラー型)
+- **Core functionality**:
+  - `clap`: CLI argument parsing with derive features
+  - `serde` + `serde_yaml` + `serde_json`: Configuration and data serialization
+  - `dirs`: System directory location
+- **macOS device monitoring** (`[target.'cfg(target_os = "macos")'.dependencies]`):
+  - `io-kit-sys`: IOKit FFI for event-driven device monitoring (`IOServiceAddMatchingNotification`)
+  - `core-foundation` + `core-foundation-sys`: Core Foundation types (CFRunLoop, CFString, CFNumber) for the IOKit monitor
+- **Error handling**:
+  - `thiserror`: Custom error type derivation
+  - `anyhow`: Error context (imported but minimal usage)
+- **Testing**:
+  - `tempfile`: Temporary directories for filesystem tests
 
 ## Platform Notes
 
 - **macOS specific**: Uses hardcoded path to Karabiner-Elements CLI defined in `src/constants.rs`
 - **Requires Karabiner-Elements** to be installed on the system
-- **Rust Edition**: Uses Rust 2024 edition for latest language features
+- **Device monitoring (`watch`)**: True event-driven via IOKit `IOServiceAddMatchingNotification` on `IOHIDDevice`. Reads only IORegistry metadata (never opens the device), so it does **not** require the Input Monitoring permission. No polling.
+- **Device listing (`check`)**: One-shot snapshot — USB via IOKit, Bluetooth via macOS `system_profiler SPBluetoothDataType`
+- **Rust Edition**: Uses Rust 2024 edition
 
 ## Development Guidelines
 
@@ -104,14 +142,15 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 - **Testing**: Use `tempfile::tempdir()` for filesystem-related tests
 - **Module Organization**: Keep modules focused on single responsibilities
 - **CLI Changes**: Update both `src/cli.rs` structs and help text consistently
+- **Device Monitoring**: Implement `DeviceMonitor` trait for new device types
+- **Backward Compatibility**: Maintain support for legacy v1 configuration format
 
 ## CI/CD
 
-- `.github/workflows/release.yml`: タグ作成またはmanual triggerでリリースビルドを実行
-- `.github/workflows/tag-on-merge.yml`: mainブランチへのマージ時にタグを自動作成
+- `.github/workflows/release.yml`: タグ作成と crates.io への publish を統合したワークフロー。タグ push または手動トリガー（`workflow_dispatch`）で起動し、`macos-latest` 上で検証ビルドしたうえで trusted publishing（OIDC）により crates.io へ公開する
 
 ## Gotchas
 
 - **`serde_yaml` is deprecated**: ビルド時にdeprecation警告が出る。将来的に`serde_yml`等への移行が必要
-- **Rust 2024 edition**: `unsafe_op_in_unsafe_fn`がデフォルトdenyなど、従来editionとの挙動差に注意
+- **Rust 2024 edition / `unsafe_op_in_unsafe_fn`**: edition 2024 ではこの lint がデフォルトで有効（warn）になり、`unsafe fn` の本体でも IOKit FFI 呼び出しなどを明示的な `unsafe {}` ブロックで囲む必要がある。`src/monitor/iokit.rs` の各 `unsafe fn` は本体全体を `unsafe {}` で囲んでこれに対応している（`cargo fix --edition` 互換のスタイル）
 - **macOS限定**: `KARABINER_CLI_PATH`が`/Library/Application Support/...`にハードコードされており、他OSでは動作しない

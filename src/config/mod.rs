@@ -1,26 +1,145 @@
-use crate::constants::{CONFIG_DIR_NAME, CONFIG_FILE_NAME, DEFAULT_PROFILE_NAME};
+use crate::constants::{
+    CONFIG_DIR_NAME, CONFIG_FILE_NAME, CURRENT_CONFIG_VERSION, DEFAULT_PROFILE_NAME,
+};
 use crate::error::{AppError, Result};
-use crate::usb_monitor::list_usb_devices;
-use dirs;
+use crate::monitor::bluetooth::list_bluetooth_devices;
+use crate::monitor::usb::list_usb_devices;
+use crate::monitor::{DeviceIdentifier, KeyboardMapping};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+/// Legacy configuration format (v1) for backward compatibility
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct Config {
+pub struct LegacyConfig {
     pub keyboard_id: u16,
     pub product_profile: String,
     pub default_profile: String,
 }
 
+/// New configuration format (v2) supporting multiple keyboards and device types
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Config {
+    /// Version of the configuration format
+    #[serde(default = "default_version")]
+    pub version: u8,
+    /// Default profile when no keyboards are connected
+    pub default_profile: String,
+    /// List of keyboard mappings
+    pub keyboards: Vec<KeyboardMapping>,
+}
+
+fn default_version() -> u8 {
+    CURRENT_CONFIG_VERSION
+}
+
 impl Config {
+    /// Create a new configuration
+    pub fn new(default_profile: impl Into<String>, keyboards: Vec<KeyboardMapping>) -> Self {
+        Config {
+            version: CURRENT_CONFIG_VERSION,
+            default_profile: default_profile.into(),
+            keyboards,
+        }
+    }
+
+    /// Validate the configuration and return any warnings
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        // Check for duplicate device mappings
+        for (i, mapping1) in self.keyboards.iter().enumerate() {
+            for mapping2 in self.keyboards.iter().skip(i + 1) {
+                if mapping1.device.matches(&mapping2.device) {
+                    warnings.push(format!(
+                        "Duplicate device mapping detected: '{}' and '{}' match the same device",
+                        mapping1.name, mapping2.name
+                    ));
+                }
+            }
+        }
+
+        // Check for empty keyboard mappings
+        if self.keyboards.is_empty() {
+            warnings.push("No keyboard mappings configured".to_string());
+        }
+
+        // Check for empty profile names
+        if self.default_profile.trim().is_empty() {
+            warnings.push("Default profile name is empty".to_string());
+        }
+
+        for mapping in &self.keyboards {
+            if mapping.profile.trim().is_empty() {
+                warnings.push(format!(
+                    "Keyboard '{}' has an empty profile name",
+                    mapping.name
+                ));
+            }
+            if mapping.name.trim().is_empty() {
+                warnings.push("A keyboard mapping has an empty name".to_string());
+            }
+            // An empty Bluetooth device name would match every Bluetooth device.
+            if let DeviceIdentifier::Bluetooth { device_name } = &mapping.device
+                && device_name.trim().is_empty()
+            {
+                warnings.push(format!(
+                    "Keyboard '{}' has an empty Bluetooth device name (would match every Bluetooth device)",
+                    mapping.name
+                ));
+            }
+        }
+
+        warnings
+    }
+
+    /// Parse config file contents, accepting both the new (v2) and legacy (v1)
+    /// formats. A v2 file declaring a version newer than this build understands
+    /// is rejected rather than silently misread.
+    fn parse_config_str(contents: &str) -> Result<Self> {
+        // Try to parse as new format first
+        if let Ok(config) = serde_yaml::from_str::<Config>(contents) {
+            if config.version > CURRENT_CONFIG_VERSION {
+                return Err(AppError::Config(format!(
+                    "Unsupported config version {} (this build supports up to v{}). Please upgrade kaps.",
+                    config.version, CURRENT_CONFIG_VERSION
+                )));
+            }
+            return Ok(config);
+        }
+
+        // Try to parse as legacy format
+        if let Ok(legacy) = serde_yaml::from_str::<LegacyConfig>(contents) {
+            return Ok(Self::from_legacy(legacy));
+        }
+
+        Err(AppError::Config(
+            "Failed to parse config file. Invalid format.".to_string(),
+        ))
+    }
+
+    /// Load configuration from file, supporting both legacy and new formats
     pub fn load() -> Result<Self> {
         let config_path = Self::get_config_path()?;
-        let contents = fs::read_to_string(config_path)
+        let contents = fs::read_to_string(&config_path)
             .map_err(|e| AppError::Config(format!("Failed to read config file: {}", e)))?;
-        let config: Config = serde_yaml::from_str(&contents)?;
-        Ok(config)
+        Self::parse_config_str(&contents)
+    }
+
+    /// Convert legacy config to new format
+    pub fn from_legacy(legacy: LegacyConfig) -> Self {
+        let mapping = KeyboardMapping::new(
+            "USB Keyboard",
+            DeviceIdentifier::usb(legacy.keyboard_id),
+            legacy.product_profile,
+        );
+
+        Config {
+            version: CURRENT_CONFIG_VERSION,
+            default_profile: legacy.default_profile,
+            keyboards: vec![mapping],
+        }
     }
 
     pub fn save(&self) -> Result<()> {
@@ -40,29 +159,39 @@ impl Config {
         Ok(path)
     }
 
+    /// Create configuration interactively
     pub fn create_interactively() -> Result<Self> {
         println!("Configuration file not found. Let's create one!");
         println!();
-        
-        // Show available USB devices
-        println!("Available USB devices:");
+
+        // Show available devices
+        println!("=== Available USB devices ===");
         list_usb_devices();
         println!();
 
-        // Get keyboard ID
-        let keyboard_id = Self::prompt_for_keyboard_id()?;
+        println!("=== Available Bluetooth devices ===");
+        if let Err(e) = list_bluetooth_devices() {
+            println!("  Could not list Bluetooth devices: {}", e);
+        }
+        println!();
 
-        // Get product profile name
-        let product_profile = Self::prompt_for_product_profile()?;
-
-        // Get default profile name
+        // Get default profile name first
         let default_profile = Self::prompt_for_default_profile()?;
 
-        let config = Config {
-            keyboard_id,
-            product_profile,
-            default_profile,
-        };
+        // Collect keyboard mappings
+        let mut keyboards = Vec::new();
+        loop {
+            println!();
+            let mapping = Self::prompt_for_keyboard_mapping()?;
+            keyboards.push(mapping);
+
+            let answer = Self::prompt_line("Add another keyboard? (y/N): ")?;
+            if !answer.to_lowercase().starts_with('y') {
+                break;
+            }
+        }
+
+        let config = Config::new(default_profile, keyboards);
 
         // Save the configuration
         config.save()?;
@@ -74,74 +203,111 @@ impl Config {
         Ok(config)
     }
 
-    fn prompt_for_keyboard_id() -> Result<u16> {
+    /// Print `prompt`, flush stdout, and read one trimmed line from stdin.
+    fn prompt_line(prompt: &str) -> Result<String> {
+        print!("{}", prompt);
+        io::stdout().flush().map_err(AppError::Io)?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).map_err(AppError::Io)?;
+        Ok(input.trim().to_string())
+    }
+
+    /// Like [`prompt_line`](Self::prompt_line), but re-prompts until the user
+    /// enters a non-empty value, printing `empty_message` on each empty attempt.
+    fn prompt_nonempty(prompt: &str, empty_message: &str) -> Result<String> {
         loop {
-            print!("Enter the USB keyboard product ID: ");
-            io::stdout().flush()
-                .map_err(|e| AppError::Io(e))?;
-            
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)
-                .map_err(|e| AppError::Io(e))?;
-            
-            match input.trim().parse::<u16>() {
+            let value = Self::prompt_line(prompt)?;
+            if !value.is_empty() {
+                return Ok(value);
+            }
+            println!("{}", empty_message);
+        }
+    }
+
+    fn prompt_for_keyboard_mapping() -> Result<KeyboardMapping> {
+        // Ask for device type
+        println!("Device type:");
+        println!("  1. USB keyboard");
+        println!("  2. Bluetooth keyboard");
+
+        let device = match Self::prompt_line("Select (1 or 2): ")?.as_str() {
+            "1" => DeviceIdentifier::usb(Self::prompt_for_usb_product_id()?),
+            "2" => DeviceIdentifier::bluetooth(Self::prompt_for_bluetooth_name()?),
+            _ => {
+                println!("Invalid selection, defaulting to USB.");
+                DeviceIdentifier::usb(Self::prompt_for_usb_product_id()?)
+            }
+        };
+
+        // Get a name for this mapping
+        let name_input =
+            Self::prompt_line("Enter a name for this keyboard (e.g., 'Work Keyboard'): ")?;
+        let name = if name_input.is_empty() {
+            "Keyboard".to_string()
+        } else {
+            name_input
+        };
+
+        // Get profile name
+        let profile = Self::prompt_for_product_profile()?;
+
+        Ok(KeyboardMapping::new(name, device, profile))
+    }
+
+    fn prompt_for_usb_product_id() -> Result<u16> {
+        loop {
+            let input = Self::prompt_line("Enter the USB keyboard product ID: ")?;
+            match input.parse::<u16>() {
                 Ok(id) => return Ok(id),
-                Err(_) => {
-                    println!("Please enter a valid number.");
-                    continue;
-                }
+                Err(_) => println!("Please enter a valid number."),
             }
         }
+    }
+
+    fn prompt_for_bluetooth_name() -> Result<String> {
+        Self::prompt_nonempty(
+            "Enter the Bluetooth device name: ",
+            "Device name cannot be empty.",
+        )
     }
 
     fn prompt_for_product_profile() -> Result<String> {
-        loop {
-            print!("Enter the Karabiner-Elements profile name for external keyboard: ");
-            io::stdout().flush()
-                .map_err(|e| AppError::Io(e))?;
-            
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)
-                .map_err(|e| AppError::Io(e))?;
-            
-            let trimmed = input.trim();
-            if !trimmed.is_empty() {
-                return Ok(trimmed.to_string());
-            } else {
-                println!("Profile name cannot be empty.");
-                continue;
-            }
-        }
+        Self::prompt_nonempty(
+            "Enter the Karabiner-Elements profile name for this keyboard: ",
+            "Profile name cannot be empty.",
+        )
     }
 
     fn prompt_for_default_profile() -> Result<String> {
-        print!("Enter the default Karabiner-Elements profile name [{}]: ", DEFAULT_PROFILE_NAME);
-        io::stdout().flush()
-            .map_err(|e| AppError::Io(e))?;
-        
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)
-            .map_err(|e| AppError::Io(e))?;
-        
-        let default_profile = if input.trim().is_empty() {
+        let input = Self::prompt_line(&format!(
+            "Enter the default Karabiner-Elements profile name [{}]: ",
+            DEFAULT_PROFILE_NAME
+        ))?;
+
+        Ok(if input.is_empty() {
             DEFAULT_PROFILE_NAME.to_string()
         } else {
-            input.trim().to_string()
-        };
-        
-        Ok(default_profile)
+            input
+        })
     }
 
+    /// Create config from CLI arguments (legacy compatibility)
     pub fn from_cli_args(
         keyboard_id: u16,
         product_profile: String,
         default_profile: Option<String>,
     ) -> Self {
-        Config {
-            keyboard_id,
+        let mapping = KeyboardMapping::new(
+            "USB Keyboard",
+            DeviceIdentifier::usb(keyboard_id),
             product_profile,
-            default_profile: default_profile.unwrap_or_else(|| DEFAULT_PROFILE_NAME.to_string()),
-        }
+        );
+
+        Config::new(
+            default_profile.unwrap_or_else(|| DEFAULT_PROFILE_NAME.to_string()),
+            vec![mapping],
+        )
     }
 
     // Test helper methods
@@ -149,8 +315,7 @@ impl Config {
     pub fn load_from_path(path: &PathBuf) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .map_err(|e| AppError::Config(format!("Failed to read config file: {}", e)))?;
-        let config: Config = serde_yaml::from_str(&contents)?;
-        Ok(config)
+        Self::parse_config_str(&contents)
     }
 
     #[cfg(test)]
@@ -162,25 +327,29 @@ impl Config {
     }
 }
 
+/// Resolve configuration from various sources
 pub fn resolve_config(
     keyboard_id: Option<u16>,
     product_profile: Option<String>,
     default_profile: Option<String>,
 ) -> Result<Config> {
-    // Try to load from config file first
-    match Config::load() {
-        Ok(config) => Ok(config),
-        Err(_) => {
-            // Config file doesn't exist, check for command line arguments
-            if let (Some(id), Some(profile)) = (keyboard_id, product_profile) {
-                // Use command line arguments
-                Ok(Config::from_cli_args(id, profile, default_profile))
-            } else {
-                // Neither config file nor complete command line arguments available
-                // Create configuration interactively
-                Config::create_interactively()
-            }
-        }
+    let config_path = Config::get_config_path()?;
+
+    // If a config file already exists, load it and surface any parse/version
+    // error instead of silently falling through to interactive setup — the
+    // latter would overwrite the user's existing (but malformed) file.
+    if config_path.exists() {
+        return Config::load();
+    }
+
+    // No config file: fall back to command line arguments, then interactive setup.
+    if let (Some(id), Some(profile)) = (keyboard_id, product_profile) {
+        // Use command line arguments
+        Ok(Config::from_cli_args(id, profile, default_profile))
+    } else {
+        // Neither config file nor complete command line arguments available
+        // Create configuration interactively
+        Config::create_interactively()
     }
 }
 

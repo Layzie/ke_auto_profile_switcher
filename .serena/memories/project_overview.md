@@ -1,23 +1,26 @@
 # Project Overview
 
 ## Purpose
-This is a Rust CLI tool called `kaps` (Karabiner Auto Profile Switcher) that automatically switches Karabiner-Elements profiles based on USB keyboard connection status. The tool monitors USB device events and switches between configured profiles when external keyboards are connected or disconnected.
+This is a Rust CLI tool called `kaps` (Karabiner Auto Profile Switcher) that automatically switches Karabiner-Elements profiles based on keyboard connection status. The tool monitors both USB and Bluetooth device events and switches between configured profiles when external keyboards are connected or disconnected. It supports multiple keyboards with different profile mappings.
 
 ## Tech Stack
 - **Language**: Rust (edition 2021)
 - **CLI Framework**: clap with derive features
-- **Configuration**: serde + serde_yaml for YAML config files
-- **USB Monitoring**: usb_enumeration crate
+- **Configuration**: serde + serde_yaml + serde_json for config and data serialization
+- **Device Monitoring**: IOKit event-driven (io-kit-sys + core-foundation + core-foundation-sys), unified for USB + Bluetooth via IOServiceAddMatchingNotification on IOHIDDevice (macOS-target only)
+- **Bluetooth listing (`check`)**: macOS system_profiler command
 - **Error Handling**: thiserror for custom error types, anyhow for error context
 - **Testing**: tempfile for filesystem tests
 
 ## Key Features
-- Automatic profile switching based on USB keyboard connection/disconnection
+- Automatic profile switching based on keyboard connection/disconnection
+- Support for both USB and Bluetooth keyboards
+- Multiple keyboard-profile mappings
 - Multiple configuration methods (config file, CLI args, interactive setup)
-- Event-driven USB device monitoring
-- Cross-platform USB device enumeration
+- True event-driven device monitoring for both USB and Bluetooth via IOKit (no polling, no Input Monitoring permission)
 - Priority-based configuration resolution
+- Backward compatible with legacy single-keyboard configuration
 
 ## Platform Requirements
 - macOS with Karabiner-Elements installed
-- Karabiner-Elements CLI at standard location (/Applications/Karabiner-Elements.app/Contents/MacOS/Karabiner-Elements)
+- Karabiner-Elements CLI at standard location (/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli)

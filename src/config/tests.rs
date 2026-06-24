@@ -1,17 +1,40 @@
 use super::*;
+use crate::monitor::DeviceIdentifier;
 use tempfile::tempdir;
 
 #[test]
 fn test_config_serialization() {
-    let config = Config {
-        keyboard_id: 1234,
-        product_profile: "External".to_string(),
-        default_profile: "Default".to_string(),
-    };
+    let mapping = KeyboardMapping::new("Test Keyboard", DeviceIdentifier::usb(1234), "External");
+
+    let config = Config::new("Default", vec![mapping]);
 
     let yaml = serde_yaml::to_string(&config).unwrap();
     let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
-    
+
+    assert_eq!(config, deserialized);
+}
+
+#[test]
+fn test_config_with_multiple_keyboards() {
+    let usb_mapping =
+        KeyboardMapping::new("USB Keyboard", DeviceIdentifier::usb(1234), "USB Profile");
+
+    let bluetooth_mapping = KeyboardMapping::new(
+        "Bluetooth Keyboard",
+        DeviceIdentifier::bluetooth("Magic Keyboard"),
+        "Bluetooth Profile",
+    );
+
+    let config = Config::new(
+        "Default",
+        vec![usb_mapping.clone(), bluetooth_mapping.clone()],
+    );
+
+    let yaml = serde_yaml::to_string(&config).unwrap();
+    let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
+
+    assert_eq!(config.keyboards.len(), 2);
+    assert_eq!(deserialized.keyboards.len(), 2);
     assert_eq!(config, deserialized);
 }
 
@@ -19,19 +42,18 @@ fn test_config_serialization() {
 fn test_config_save_and_load() {
     let dir = tempdir().unwrap();
     let config_path = dir.path().join("config.yml");
-    
-    let config = Config {
-        keyboard_id: 5678,
-        product_profile: "Test Profile".to_string(),
-        default_profile: "Test Default".to_string(),
-    };
+
+    let mapping =
+        KeyboardMapping::new("Test Keyboard", DeviceIdentifier::usb(5678), "Test Profile");
+
+    let config = Config::new("Test Default", vec![mapping]);
 
     // Save config
     config.save_to_path(&config_path).unwrap();
-    
+
     // Load config
     let loaded_config = Config::load_from_path(&config_path).unwrap();
-    
+
     assert_eq!(config, loaded_config);
 }
 
@@ -42,21 +64,163 @@ fn test_config_from_cli_args() {
         "CLI Profile".to_string(),
         Some("CLI Default".to_string()),
     );
-    
-    assert_eq!(config.keyboard_id, 1111);
-    assert_eq!(config.product_profile, "CLI Profile");
+
+    assert_eq!(config.keyboards.len(), 1);
+    assert_eq!(config.keyboards[0].profile, "CLI Profile");
     assert_eq!(config.default_profile, "CLI Default");
+
+    // Verify the device identifier
+    match &config.keyboards[0].device {
+        DeviceIdentifier::Usb { product_id } => assert_eq!(*product_id, 1111),
+        _ => panic!("Expected USB device identifier"),
+    }
 }
 
 #[test]
 fn test_config_from_cli_args_with_default() {
-    let config = Config::from_cli_args(
-        2222,
-        "CLI Profile".to_string(),
-        None,
-    );
-    
-    assert_eq!(config.keyboard_id, 2222);
-    assert_eq!(config.product_profile, "CLI Profile");
+    let config = Config::from_cli_args(2222, "CLI Profile".to_string(), None);
+
+    assert_eq!(config.keyboards.len(), 1);
+    assert_eq!(config.keyboards[0].profile, "CLI Profile");
     assert_eq!(config.default_profile, DEFAULT_PROFILE_NAME);
+}
+
+#[test]
+fn test_legacy_config_compatibility() {
+    let dir = tempdir().unwrap();
+    let config_path = dir.path().join("config.yml");
+
+    // Create a legacy config file
+    let legacy_yaml = r#"
+keyboard_id: 1234
+product_profile: "External"
+default_profile: "Default"
+"#;
+    fs::write(&config_path, legacy_yaml).unwrap();
+
+    // Load it with the new Config
+    let config = Config::load_from_path(&config_path).unwrap();
+
+    assert_eq!(config.keyboards.len(), 1);
+    assert_eq!(config.default_profile, "Default");
+    assert_eq!(config.keyboards[0].profile, "External");
+
+    match &config.keyboards[0].device {
+        DeviceIdentifier::Usb { product_id } => assert_eq!(*product_id, 1234),
+        _ => panic!("Expected USB device identifier"),
+    }
+}
+
+#[test]
+fn test_device_identifier_display() {
+    let usb = DeviceIdentifier::usb(1234);
+    let bt = DeviceIdentifier::bluetooth("Magic Keyboard");
+
+    assert!(usb.display_name().contains("1234"));
+    assert!(bt.display_name().contains("Magic Keyboard"));
+}
+
+#[test]
+fn test_validate_empty_keyboards() {
+    let config = Config::new("Default", vec![]);
+    let warnings = config.validate();
+
+    assert!(warnings.iter().any(|w| w.contains("No keyboard mappings")));
+}
+
+#[test]
+fn test_validate_duplicate_usb_mappings() {
+    let mapping1 = KeyboardMapping::new("KB1", DeviceIdentifier::usb(1234), "Profile1");
+    let mapping2 = KeyboardMapping::new("KB2", DeviceIdentifier::usb(1234), "Profile2");
+    let config = Config::new("Default", vec![mapping1, mapping2]);
+
+    let warnings = config.validate();
+    assert!(warnings.iter().any(|w| w.contains("Duplicate device")));
+}
+
+#[test]
+fn test_validate_duplicate_bluetooth_mappings() {
+    let mapping1 = KeyboardMapping::new(
+        "KB1",
+        DeviceIdentifier::bluetooth("Magic Keyboard"),
+        "Profile1",
+    );
+    let mapping2 = KeyboardMapping::new(
+        "KB2",
+        DeviceIdentifier::bluetooth("MAGIC KEYBOARD"),
+        "Profile2",
+    );
+    let config = Config::new("Default", vec![mapping1, mapping2]);
+
+    let warnings = config.validate();
+    // Case-insensitive matching should detect this as duplicate
+    assert!(warnings.iter().any(|w| w.contains("Duplicate device")));
+}
+
+#[test]
+fn test_validate_empty_profile_name() {
+    let mapping = KeyboardMapping::new("KB1", DeviceIdentifier::usb(1234), "");
+    let config = Config::new("Default", vec![mapping]);
+
+    let warnings = config.validate();
+    assert!(warnings.iter().any(|w| w.contains("empty profile name")));
+}
+
+#[test]
+fn test_validate_empty_bluetooth_name() {
+    let mapping = KeyboardMapping::new("BT KB", DeviceIdentifier::bluetooth(""), "BT Profile");
+    let config = Config::new("Default", vec![mapping]);
+
+    let warnings = config.validate();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("empty Bluetooth device name"))
+    );
+}
+
+#[test]
+fn test_validate_valid_config() {
+    let mapping1 = KeyboardMapping::new("USB KB", DeviceIdentifier::usb(1234), "USB Profile");
+    let mapping2 = KeyboardMapping::new(
+        "BT KB",
+        DeviceIdentifier::bluetooth("Magic Keyboard"),
+        "BT Profile",
+    );
+    let config = Config::new("Default", vec![mapping1, mapping2]);
+
+    let warnings = config.validate();
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn test_keyboard_mapping_with_priority() {
+    let mapping = KeyboardMapping::with_priority(
+        "High Priority KB",
+        DeviceIdentifier::usb(1234),
+        "High Priority Profile",
+        100,
+    );
+
+    assert_eq!(mapping.priority, 100);
+    assert_eq!(mapping.name, "High Priority KB");
+}
+
+#[test]
+fn test_keyboard_mapping_default_priority() {
+    let mapping = KeyboardMapping::new("KB", DeviceIdentifier::usb(1234), "Profile");
+
+    assert_eq!(mapping.priority, 0);
+}
+
+#[test]
+fn test_config_with_priority_serialization() {
+    let mapping =
+        KeyboardMapping::with_priority("Priority KB", DeviceIdentifier::usb(1234), "Profile", 50);
+    let config = Config::new("Default", vec![mapping]);
+
+    let yaml = serde_yaml::to_string(&config).unwrap();
+    let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
+
+    assert_eq!(deserialized.keyboards[0].priority, 50);
 }

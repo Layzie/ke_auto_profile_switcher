@@ -2,14 +2,21 @@
 
 ## What's this?
 
-This CLI automatically switches [Karabiner-Elements](https://karabiner-elements.pqrs.org/ "Karabiner-Elements") profiles based on USB keyboard connection status. When an external USB keyboard is connected, it switches to your designated profile for external keyboards. When disconnected, it switches back to your default profile.
+This CLI automatically switches [Karabiner-Elements](https://karabiner-elements.pqrs.org/ "Karabiner-Elements") profiles based on keyboard connection status. It supports both **USB** and **Bluetooth** keyboards, and can monitor multiple keyboards simultaneously with different profile mappings.
 
 ## Features
 
-- **Automatic Profile Switching**: Seamlessly switches between Karabiner profiles based on USB keyboard connection
-- **Multiple Configuration Methods**: Support for configuration files, command-line arguments, or interactive setup
+- **Automatic Profile Switching**: Seamlessly switches between Karabiner profiles based on keyboard connection
+- **USB & Bluetooth Support**: Monitor both USB and Bluetooth keyboards
+- **True Event-Driven Monitoring**: USB and Bluetooth are watched through IOKit notifications (no polling, instant response) and require no Input Monitoring permission
+- **Multiple Keyboard Support**: Configure different profiles for different keyboards
+- **Priority-Based Profile Selection**: When multiple keyboards are connected, the one with the highest priority is used
+- **Idempotent Profile Switching**: Skips redundant `karabiner_cli` invocations when the target profile is already active
+- **Multiple Configuration Methods**: Configuration file, command-line arguments, or interactive setup
 - **Interactive Setup**: First-time users are guided through an easy setup process
-- **USB Device Detection**: Lists available USB devices to help identify your keyboard's product ID
+- **Device Detection**: Lists available USB and Bluetooth devices to help identify your keyboards
+- **Verbose Mode**: Debug logging for troubleshooting connection issues
+- **Configuration Validation**: Warnings for duplicate mappings and invalid configurations
 
 ## Install
 ```bash
@@ -24,21 +31,44 @@ $ cargo install ke_auto_profile_switcher
 $ kaps watch
 ```
 
-### Method 2: Using Command-Line Arguments
-```bash
-# Check your USB keyboard's product ID first
-$ kaps check
+### Method 2: Configuration File (Recommended for multiple keyboards)
+Create `~/.config/ke_auto_profile_switcher/config.yml`:
 
-# Start watching with your keyboard's details
-$ kaps watch --keyboard-id 1234 --product-profile "External Keyboard" --default-profile "Default"
+#### Simple Configuration (Single Keyboard)
+```yaml
+version: 2
+default_profile: "Default"
+keyboards:
+  - name: "External Keyboard"
+    device:
+      type: usb
+      product_id: 1234
+    profile: "External Keyboard"
 ```
 
-### Method 3: Configuration File
-Create `~/.config/ke_auto_profile_switcher/config.yml`:
+#### Advanced Configuration (Multiple Keyboards with Priority)
 ```yaml
-keyboard_id: 1234
-product_profile: "External Keyboard"
+version: 2
 default_profile: "Default"
+keyboards:
+  - name: "Work USB Keyboard"
+    device:
+      type: usb
+      product_id: 1234
+    profile: "Work Profile"
+    priority: 10  # Higher priority - this profile is preferred when multiple keyboards are connected
+  - name: "Magic Keyboard"
+    device:
+      type: bluetooth
+      device_name: "Magic Keyboard"
+    profile: "Bluetooth Profile"
+    priority: 5
+  - name: "Home Mechanical"
+    device:
+      type: usb
+      product_id: 5678
+    profile: "Gaming Profile"
+    priority: 0  # Default priority (used when omitted)
 ```
 
 Then simply run:
@@ -46,25 +76,46 @@ Then simply run:
 $ kaps watch
 ```
 
+### Method 3: Command-Line Arguments (Legacy USB-only mode)
+Useful for one-shot trials. Only supports a single USB keyboard; the config-file route above is preferred for new setups.
+
+```bash
+# Check your USB keyboard's product ID first
+$ kaps check -t usb
+
+# Start watching with your keyboard's details
+$ kaps watch --keyboard-id 1234 --product-profile "External Keyboard" --default-profile "Default"
+```
+
 ## Usage
 
 ### Commands
 
 #### `kaps check`
-Lists all connected USB devices with their product IDs. Use this to identify your external keyboard's product ID.
+Lists all connected devices. Use this to identify your keyboards.
 
 ```bash
+# List all devices (USB and Bluetooth)
 $ kaps check
+
+# List only USB devices
+$ kaps check -t usb
+
+# List only Bluetooth devices
+$ kaps check -t bluetooth
 ```
 
 #### `kaps watch`
-Starts monitoring USB device connections and automatically switches Karabiner profiles.
+Starts monitoring device connections and automatically switches Karabiner profiles.
 
 ```bash
 # Interactive mode (will prompt for configuration if needed)
 $ kaps watch
 
-# With command-line arguments
+# With verbose logging (useful for debugging)
+$ kaps watch --verbose
+
+# With command-line arguments (legacy USB-only mode)
 $ kaps watch --keyboard-id <PRODUCT_ID> --product-profile <EXTERNAL_PROFILE>
 
 # With all options
@@ -73,25 +124,66 @@ $ kaps watch --keyboard-id <PRODUCT_ID> --product-profile <EXTERNAL_PROFILE> --d
 
 ### Options
 
-- `--keyboard-id` (`-k`): USB product ID of your external keyboard
-- `--product-profile` (`-p`): Karabiner profile name to use when external keyboard is connected
+- `--keyboard-id` (`-k`): USB product ID of your external keyboard (legacy option)
+- `--product-profile` (`-p`): Karabiner profile name to use when external keyboard is connected (legacy option)
 - `--default-profile` (`-d`): Karabiner profile name to use when external keyboard is disconnected (defaults to "Default")
+- `--verbose` (`-v`): Enable verbose/debug logging for troubleshooting
 
 ### Configuration Priority
 
 The application uses configuration in the following priority order:
 1. **Configuration file** (if exists): `~/.config/ke_auto_profile_switcher/config.yml`
-2. **Command-line arguments** (if keyboard-id and product-profile are provided)
+2. **Command-line arguments** (if both `--keyboard-id` and `--product-profile` are provided)
 3. **Interactive setup** (if neither config file nor complete arguments are provided)
+
+Legacy v1 YAML configs are loaded transparently and converted to v2 internally — you do not need to migrate manually.
+
+## Configuration File Format
+
+### Version 2 (New - Recommended)
+
+The new configuration format supports multiple keyboards and both USB and Bluetooth devices:
+
+```yaml
+version: 2
+default_profile: "Default"  # Profile when no keyboards are connected
+keyboards:
+  - name: "My USB Keyboard"      # Human-readable name
+    device:
+      type: usb                  # Device type: "usb" or "bluetooth"
+      product_id: 1234           # USB product ID (for USB devices)
+    profile: "USB Profile"       # Profile to switch to when connected
+    priority: 10                 # Optional: higher = preferred when multiple connected
+  - name: "My Bluetooth Keyboard"
+    device:
+      type: bluetooth
+      device_name: "Magic Keyboard"  # Bluetooth device name (partial match supported)
+    profile: "Bluetooth Profile"
+    priority: 5                  # Optional: defaults to 0 if not specified
+```
+
+### Version 1 (Legacy - Still Supported)
+
+The legacy format is still supported for backward compatibility:
+
+```yaml
+keyboard_id: 1234
+product_profile: "External Keyboard"
+default_profile: "Default"
+```
 
 ## Example Workflow
 
-1. **Find your keyboard's product ID:**
+1. **Find your keyboard's device info:**
    ```bash
    $ kaps check
-   Available USB devices:
-     ID: 1452, Product: Apple Internal Keyboard / Trackpad
-     ID: 1234, Product: My External Keyboard
+   === USB Devices ===
+     Product ID: 1452, Name: Apple Internal Keyboard / Trackpad
+     Product ID: 1234, Name: My External Keyboard
+   
+   === Bluetooth Devices ===
+     Name: Magic Keyboard, Status: Connected, Type: Keyboard
+     Name: AirPods Pro, Status: Connected, Type: Other
    ```
 
 2. **Start monitoring (interactive setup):**
@@ -99,23 +191,45 @@ The application uses configuration in the following priority order:
    $ kaps watch
    Configuration file not found. Let's create one!
    
-   Available USB devices:
-     ID: 1452, Product: Apple Internal Keyboard / Trackpad
-     ID: 1234, Product: My External Keyboard
+   === Available USB devices ===
+     Product ID: 1452, Name: Apple Internal Keyboard / Trackpad
+     Product ID: 1234, Name: My External Keyboard
    
-   Enter the USB keyboard product ID: 1234
-   Enter the Karabiner-Elements profile name for external keyboard: External Keyboard
+   === Available Bluetooth devices ===
+     Name: Magic Keyboard, Status: Connected, Type: Keyboard
+   
    Enter the default Karabiner-Elements profile name [Default]: 
+   
+   Device type:
+     1. USB keyboard
+     2. Bluetooth keyboard
+   Select (1 or 2): 2
+   Enter the Bluetooth device name: Magic Keyboard
+   Enter a name for this keyboard (e.g., 'Work Keyboard'): Magic Keyboard
+   Enter the Karabiner-Elements profile name for this keyboard: Bluetooth Profile
+   
+   Add another keyboard? (y/N): n
    
    Configuration saved successfully!
    ```
 
-3. **Connect/disconnect your external keyboard and watch the automatic profile switching!**
+3. **Connect/disconnect your keyboards and watch the automatic profile switching!**
+
+## How It Works
+
+- **Event-Driven Monitoring**: USB and Bluetooth keyboards are watched together by a single IOKit monitor that registers `IOServiceAddMatchingNotification` on the `IOHIDDevice` service class. Connect/disconnect events arrive in real time on a CFRunLoop — no polling.
+- **No Input Monitoring permission**: Only IORegistry metadata (product id, name, transport, HID usage) is read; the HID device is never opened with `IOHIDManagerOpen`, so macOS does not prompt for Input Monitoring access.
+- **Device Detection (`check`)**: The `check` command takes a one-shot snapshot — USB via IOKit, Bluetooth via `system_profiler SPBluetoothDataType -json` (with automatic retry).
+- **Priority-Based Selection**: When multiple keyboards are connected, the one with the highest `priority` value is used (defaults to 0 when omitted)
+- **Partial Name Matching**: Bluetooth devices are matched using case-insensitive bidirectional substring matching, so a config name like `"HHKB"` matches the system-reported `"HHKB-BT"`. Conversely, a too-generic name may match unrelated devices — be specific.
+- **Idempotent Profile Switching**: Each event recomputes the target profile, but `karabiner_cli` is only invoked when the target actually changes — this avoids spurious switches when several events resolve to the same profile
 
 ## Requirements
 
 - macOS with [Karabiner-Elements](https://karabiner-elements.pqrs.org/) installed
-- The application assumes Karabiner-Elements is installed in the default location
+- The application assumes Karabiner-Elements is installed in the default location (`/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli`)
+- No extra system permissions are required — device monitoring reads IOKit metadata only and does not request Input Monitoring access
+- Rust toolchain (edition 2021) when building from source
 
 ## LICENSE
 
