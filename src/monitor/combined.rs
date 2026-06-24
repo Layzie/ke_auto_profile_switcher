@@ -52,6 +52,19 @@ impl CombinedMonitor {
             .unwrap_or_else(|| default_profile.to_string())
     }
 
+    /// Find the highest-priority configured mapping that matches `device`, or
+    /// `None` if no mapping matches.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn best_matching_mapping<'a>(
+        mappings: &'a [KeyboardMapping],
+        device: &DeviceIdentifier,
+    ) -> Option<&'a KeyboardMapping> {
+        mappings
+            .iter()
+            .filter(|m| m.device.matches(device))
+            .max_by_key(|m| m.priority)
+    }
+
     /// Apply `target` via Karabiner only if it differs from the last applied
     /// profile. The cache lock is kept while switching so that concurrent events
     /// (should they ever overlap) serialize and observe a consistent cache.
@@ -76,7 +89,7 @@ impl CombinedMonitor {
         Ok(())
     }
 
-    pub fn start_monitoring(&self) -> Result<()> {
+    pub fn start_monitoring(mut self) -> Result<()> {
         let mut usb_product_ids: Vec<u16> = Vec::new();
         let mut bluetooth_names: Vec<String> = Vec::new();
         for mapping in &self.mappings {
@@ -98,9 +111,10 @@ impl CombinedMonitor {
         println!("Default profile: {}", self.default_profile);
         println!("Configured mappings (sorted by priority):");
 
-        let mut sorted_mappings = self.mappings.clone();
-        sorted_mappings.sort_by(|a, b| b.priority.cmp(&a.priority));
-        for mapping in &sorted_mappings {
+        // Sort once (descending) for display; the handler below reuses the same
+        // ordering. `max_by_key` is stable, so the chosen mapping is unaffected.
+        self.mappings.sort_by(|a, b| b.priority.cmp(&a.priority));
+        for mapping in &self.mappings {
             println!(
                 "  - {} [priority: {}] -> Profile: {}",
                 mapping.device.display_name(),
@@ -116,8 +130,8 @@ impl CombinedMonitor {
         #[cfg(target_os = "macos")]
         {
             let karabiner = KarabinerController::new();
-            let mappings = Arc::new(self.mappings.clone());
-            let default_profile = Arc::new(self.default_profile.clone());
+            let mappings = Arc::new(self.mappings);
+            let default_profile = Arc::new(self.default_profile);
             let connected_devices: Arc<Mutex<Vec<ConnectedDevice>>> =
                 Arc::new(Mutex::new(Vec::new()));
             let last_applied: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -142,10 +156,8 @@ impl CombinedMonitor {
                                 }
                                 // Bind to the highest-priority matching mapping,
                                 // not merely the first one in config order.
-                                if let Some(mapping) = mappings
-                                    .iter()
-                                    .filter(|m| m.device.matches(device))
-                                    .max_by_key(|m| m.priority)
+                                if let Some(mapping) =
+                                    Self::best_matching_mapping(&mappings, device)
                                 {
                                     if verbose {
                                         println!(
@@ -169,10 +181,7 @@ impl CombinedMonitor {
                             Some(profile)
                         }
                         DeviceEvent::Connected(device) => {
-                            let Some(mapping) = mappings
-                                .iter()
-                                .filter(|m| m.device.matches(&device))
-                                .max_by_key(|m| m.priority)
+                            let Some(mapping) = Self::best_matching_mapping(&mappings, &device)
                             else {
                                 if verbose {
                                     println!(
