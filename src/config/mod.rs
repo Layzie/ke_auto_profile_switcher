@@ -94,14 +94,12 @@ impl Config {
         warnings
     }
 
-    /// Load configuration from file, supporting both legacy and new formats
-    pub fn load() -> Result<Self> {
-        let config_path = Self::get_config_path()?;
-        let contents = fs::read_to_string(&config_path)
-            .map_err(|e| AppError::Config(format!("Failed to read config file: {}", e)))?;
-
+    /// Parse config file contents, accepting both the new (v2) and legacy (v1)
+    /// formats. A v2 file declaring a version newer than this build understands
+    /// is rejected rather than silently misread.
+    fn parse_config_str(contents: &str) -> Result<Self> {
         // Try to parse as new format first
-        if let Ok(config) = serde_yaml::from_str::<Config>(&contents) {
+        if let Ok(config) = serde_yaml::from_str::<Config>(contents) {
             if config.version > CURRENT_CONFIG_VERSION {
                 return Err(AppError::Config(format!(
                     "Unsupported config version {} (this build supports up to v{}). Please upgrade kaps.",
@@ -112,13 +110,21 @@ impl Config {
         }
 
         // Try to parse as legacy format
-        if let Ok(legacy) = serde_yaml::from_str::<LegacyConfig>(&contents) {
+        if let Ok(legacy) = serde_yaml::from_str::<LegacyConfig>(contents) {
             return Ok(Self::from_legacy(legacy));
         }
 
         Err(AppError::Config(
             "Failed to parse config file. Invalid format.".to_string(),
         ))
+    }
+
+    /// Load configuration from file, supporting both legacy and new formats
+    pub fn load() -> Result<Self> {
+        let config_path = Self::get_config_path()?;
+        let contents = fs::read_to_string(&config_path)
+            .map_err(|e| AppError::Config(format!("Failed to read config file: {}", e)))?;
+        Self::parse_config_str(&contents)
     }
 
     /// Convert legacy config to new format
@@ -345,18 +351,7 @@ impl Config {
     pub fn load_from_path(path: &PathBuf) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .map_err(|e| AppError::Config(format!("Failed to read config file: {}", e)))?;
-
-        // Try new format first
-        if let Ok(config) = serde_yaml::from_str::<Config>(&contents) {
-            return Ok(config);
-        }
-
-        // Try legacy format
-        if let Ok(legacy) = serde_yaml::from_str::<LegacyConfig>(&contents) {
-            return Ok(Self::from_legacy(legacy));
-        }
-
-        Err(AppError::Config("Failed to parse config file".to_string()))
+        Self::parse_config_str(&contents)
     }
 
     #[cfg(test)]
