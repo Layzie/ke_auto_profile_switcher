@@ -1,4 +1,6 @@
-use crate::constants::{CONFIG_DIR_NAME, CONFIG_FILE_NAME, DEFAULT_PROFILE_NAME};
+use crate::constants::{
+    CONFIG_DIR_NAME, CONFIG_FILE_NAME, CURRENT_CONFIG_VERSION, DEFAULT_PROFILE_NAME,
+};
 use crate::error::{AppError, Result};
 use crate::monitor::bluetooth::list_bluetooth_devices;
 use crate::monitor::usb::list_usb_devices;
@@ -29,14 +31,14 @@ pub struct Config {
 }
 
 fn default_version() -> u8 {
-    2
+    CURRENT_CONFIG_VERSION
 }
 
 impl Config {
     /// Create a new configuration
     pub fn new(default_profile: impl Into<String>, keyboards: Vec<KeyboardMapping>) -> Self {
         Config {
-            version: 2,
+            version: CURRENT_CONFIG_VERSION,
             default_profile: default_profile.into(),
             keyboards,
         }
@@ -78,6 +80,15 @@ impl Config {
             if mapping.name.trim().is_empty() {
                 warnings.push("A keyboard mapping has an empty name".to_string());
             }
+            // An empty Bluetooth device name would match every Bluetooth device.
+            if let DeviceIdentifier::Bluetooth { device_name } = &mapping.device {
+                if device_name.trim().is_empty() {
+                    warnings.push(format!(
+                        "Keyboard '{}' has an empty Bluetooth device name (would match every Bluetooth device)",
+                        mapping.name
+                    ));
+                }
+            }
         }
 
         warnings
@@ -91,6 +102,12 @@ impl Config {
 
         // Try to parse as new format first
         if let Ok(config) = serde_yaml::from_str::<Config>(&contents) {
+            if config.version > CURRENT_CONFIG_VERSION {
+                return Err(AppError::Config(format!(
+                    "Unsupported config version {} (this build supports up to v{}). Please upgrade kaps.",
+                    config.version, CURRENT_CONFIG_VERSION
+                )));
+            }
             return Ok(config);
         }
 
@@ -113,7 +130,7 @@ impl Config {
         );
 
         Config {
-            version: 2,
+            version: CURRENT_CONFIG_VERSION,
             default_profile: legacy.default_profile,
             keyboards: vec![mapping],
         }
@@ -357,20 +374,23 @@ pub fn resolve_config(
     product_profile: Option<String>,
     default_profile: Option<String>,
 ) -> Result<Config> {
-    // Try to load from config file first
-    match Config::load() {
-        Ok(config) => Ok(config),
-        Err(_) => {
-            // Config file doesn't exist, check for command line arguments
-            if let (Some(id), Some(profile)) = (keyboard_id, product_profile) {
-                // Use command line arguments
-                Ok(Config::from_cli_args(id, profile, default_profile))
-            } else {
-                // Neither config file nor complete command line arguments available
-                // Create configuration interactively
-                Config::create_interactively()
-            }
-        }
+    let config_path = Config::get_config_path()?;
+
+    // If a config file already exists, load it and surface any parse/version
+    // error instead of silently falling through to interactive setup — the
+    // latter would overwrite the user's existing (but malformed) file.
+    if config_path.exists() {
+        return Config::load();
+    }
+
+    // No config file: fall back to command line arguments, then interactive setup.
+    if let (Some(id), Some(profile)) = (keyboard_id, product_profile) {
+        // Use command line arguments
+        Ok(Config::from_cli_args(id, profile, default_profile))
+    } else {
+        // Neither config file nor complete command line arguments available
+        // Create configuration interactively
+        Config::create_interactively()
     }
 }
 

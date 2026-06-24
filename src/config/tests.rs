@@ -167,6 +167,17 @@ fn test_validate_empty_profile_name() {
 }
 
 #[test]
+fn test_validate_empty_bluetooth_name() {
+    let mapping = KeyboardMapping::new("BT KB", DeviceIdentifier::bluetooth(""), "BT Profile");
+    let config = Config::new("Default", vec![mapping]);
+
+    let warnings = config.validate();
+    assert!(warnings
+        .iter()
+        .any(|w| w.contains("empty Bluetooth device name")));
+}
+
+#[test]
 fn test_validate_valid_config() {
     let mapping1 = KeyboardMapping::new("USB KB", DeviceIdentifier::usb(1234), "USB Profile");
     let mapping2 = KeyboardMapping::new(
