@@ -185,13 +185,8 @@ impl Config {
             let mapping = Self::prompt_for_keyboard_mapping()?;
             keyboards.push(mapping);
 
-            print!("Add another keyboard? (y/N): ");
-            io::stdout().flush().map_err(AppError::Io)?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).map_err(AppError::Io)?;
-
-            if !input.trim().to_lowercase().starts_with('y') {
+            let answer = Self::prompt_line("Add another keyboard? (y/N): ")?;
+            if !answer.to_lowercase().starts_with('y') {
                 break;
             }
         }
@@ -208,45 +203,50 @@ impl Config {
         Ok(config)
     }
 
+    /// Print `prompt`, flush stdout, and read one trimmed line from stdin.
+    fn prompt_line(prompt: &str) -> Result<String> {
+        print!("{}", prompt);
+        io::stdout().flush().map_err(AppError::Io)?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).map_err(AppError::Io)?;
+        Ok(input.trim().to_string())
+    }
+
+    /// Like [`prompt_line`](Self::prompt_line), but re-prompts until the user
+    /// enters a non-empty value, printing `empty_message` on each empty attempt.
+    fn prompt_nonempty(prompt: &str, empty_message: &str) -> Result<String> {
+        loop {
+            let value = Self::prompt_line(prompt)?;
+            if !value.is_empty() {
+                return Ok(value);
+            }
+            println!("{}", empty_message);
+        }
+    }
+
     fn prompt_for_keyboard_mapping() -> Result<KeyboardMapping> {
         // Ask for device type
         println!("Device type:");
         println!("  1. USB keyboard");
         println!("  2. Bluetooth keyboard");
-        print!("Select (1 or 2): ");
-        io::stdout().flush().map_err(AppError::Io)?;
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).map_err(AppError::Io)?;
-
-        let device = match input.trim() {
-            "1" => {
-                let product_id = Self::prompt_for_usb_product_id()?;
-                DeviceIdentifier::usb(product_id)
-            }
-            "2" => {
-                let device_name = Self::prompt_for_bluetooth_name()?;
-                DeviceIdentifier::bluetooth(device_name)
-            }
+        let device = match Self::prompt_line("Select (1 or 2): ")?.as_str() {
+            "1" => DeviceIdentifier::usb(Self::prompt_for_usb_product_id()?),
+            "2" => DeviceIdentifier::bluetooth(Self::prompt_for_bluetooth_name()?),
             _ => {
                 println!("Invalid selection, defaulting to USB.");
-                let product_id = Self::prompt_for_usb_product_id()?;
-                DeviceIdentifier::usb(product_id)
+                DeviceIdentifier::usb(Self::prompt_for_usb_product_id()?)
             }
         };
 
         // Get a name for this mapping
-        print!("Enter a name for this keyboard (e.g., 'Work Keyboard'): ");
-        io::stdout().flush().map_err(AppError::Io)?;
-
-        let mut name_input = String::new();
-        io::stdin()
-            .read_line(&mut name_input)
-            .map_err(AppError::Io)?;
-        let name = if name_input.trim().is_empty() {
+        let name_input =
+            Self::prompt_line("Enter a name for this keyboard (e.g., 'Work Keyboard'): ")?;
+        let name = if name_input.is_empty() {
             "Keyboard".to_string()
         } else {
-            name_input.trim().to_string()
+            name_input
         };
 
         // Get profile name
@@ -257,75 +257,39 @@ impl Config {
 
     fn prompt_for_usb_product_id() -> Result<u16> {
         loop {
-            print!("Enter the USB keyboard product ID: ");
-            io::stdout().flush().map_err(AppError::Io)?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).map_err(AppError::Io)?;
-
-            match input.trim().parse::<u16>() {
+            let input = Self::prompt_line("Enter the USB keyboard product ID: ")?;
+            match input.parse::<u16>() {
                 Ok(id) => return Ok(id),
-                Err(_) => {
-                    println!("Please enter a valid number.");
-                    continue;
-                }
+                Err(_) => println!("Please enter a valid number."),
             }
         }
     }
 
     fn prompt_for_bluetooth_name() -> Result<String> {
-        loop {
-            print!("Enter the Bluetooth device name: ");
-            io::stdout().flush().map_err(AppError::Io)?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).map_err(AppError::Io)?;
-
-            let trimmed = input.trim();
-            if !trimmed.is_empty() {
-                return Ok(trimmed.to_string());
-            } else {
-                println!("Device name cannot be empty.");
-                continue;
-            }
-        }
+        Self::prompt_nonempty(
+            "Enter the Bluetooth device name: ",
+            "Device name cannot be empty.",
+        )
     }
 
     fn prompt_for_product_profile() -> Result<String> {
-        loop {
-            print!("Enter the Karabiner-Elements profile name for this keyboard: ");
-            io::stdout().flush().map_err(AppError::Io)?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).map_err(AppError::Io)?;
-
-            let trimmed = input.trim();
-            if !trimmed.is_empty() {
-                return Ok(trimmed.to_string());
-            } else {
-                println!("Profile name cannot be empty.");
-                continue;
-            }
-        }
+        Self::prompt_nonempty(
+            "Enter the Karabiner-Elements profile name for this keyboard: ",
+            "Profile name cannot be empty.",
+        )
     }
 
     fn prompt_for_default_profile() -> Result<String> {
-        print!(
+        let input = Self::prompt_line(&format!(
             "Enter the default Karabiner-Elements profile name [{}]: ",
             DEFAULT_PROFILE_NAME
-        );
-        io::stdout().flush().map_err(AppError::Io)?;
+        ))?;
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).map_err(AppError::Io)?;
-
-        let default_profile = if input.trim().is_empty() {
+        Ok(if input.is_empty() {
             DEFAULT_PROFILE_NAME.to_string()
         } else {
-            input.trim().to_string()
-        };
-
-        Ok(default_profile)
+            input
+        })
     }
 
     /// Create config from CLI arguments (legacy compatibility)
