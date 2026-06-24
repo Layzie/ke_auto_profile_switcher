@@ -144,3 +144,13 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 - **CLI Changes**: Update both `src/cli.rs` structs and help text consistently
 - **Device Monitoring**: Implement `DeviceMonitor` trait for new device types
 - **Backward Compatibility**: Maintain support for legacy v1 configuration format
+
+## CI/CD
+
+- `.github/workflows/release.yml`: タグ作成と crates.io への publish を統合したワークフロー。タグ push または手動トリガー（`workflow_dispatch`）で起動し、`macos-latest` 上で検証ビルドしたうえで trusted publishing（OIDC）により crates.io へ公開する
+
+## Gotchas
+
+- **`serde_yaml` is deprecated**: ビルド時にdeprecation警告が出る。将来的に`serde_yml`等への移行が必要
+- **Rust 2021 edition**: IOKit FFI の `unsafe` を多用するため、`unsafe_op_in_unsafe_fn` がデフォルト deny になる edition 2024 ではなく 2021 を採用している（`Cargo.toml` 参照）
+- **macOS限定**: `KARABINER_CLI_PATH`が`/Library/Application Support/...`にハードコードされており、他OSでは動作しない
