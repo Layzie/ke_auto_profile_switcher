@@ -57,8 +57,32 @@ impl DeviceIdentifier {
             ) => {
                 let name1_lower = name1.to_ascii_lowercase();
                 let name2_lower = name2.to_ascii_lowercase();
-                name1_lower.contains(&name2_lower) || name2_lower.contains(&name1_lower)
+                // An empty name must never match: an empty configured name would
+                // otherwise substring-match (via `contains("")`) every device.
+                !name1_lower.is_empty()
+                    && !name2_lower.is_empty()
+                    && (name1_lower.contains(&name2_lower) || name2_lower.contains(&name1_lower))
             }
+            _ => false,
+        }
+    }
+
+    /// Exact-identity comparison used to track the *same* physical device across
+    /// connect/disconnect events. Unlike [`matches`](Self::matches) (which does
+    /// partial Bluetooth-name matching against a *configured* name), this
+    /// requires full equality, so a disconnect only removes the device that
+    /// actually disconnected rather than any tracked device whose name is a
+    /// substring of it.
+    pub fn is_same_device(&self, other: &DeviceIdentifier) -> bool {
+        match (self, other) {
+            (
+                DeviceIdentifier::Usb { product_id: id1 },
+                DeviceIdentifier::Usb { product_id: id2 },
+            ) => id1 == id2,
+            (
+                DeviceIdentifier::Bluetooth { device_name: name1 },
+                DeviceIdentifier::Bluetooth { device_name: name2 },
+            ) => name1.eq_ignore_ascii_case(name2),
             _ => false,
         }
     }

@@ -69,7 +69,8 @@ impl CombinedMonitor {
             }
             return Ok(());
         }
-        println!("Switching to profile: {}", target);
+        // `switch_profile` itself prints "Switched to profile: ..." on success,
+        // so we intentionally do not print a separate "Switching" line here.
         karabiner.switch_profile(target)?;
         *applied = Some(target.to_string());
         Ok(())
@@ -130,8 +131,21 @@ impl CombinedMonitor {
                     match event {
                         DeviceEvent::Initial(devices) => {
                             for device in &devices {
-                                if let Some(mapping) =
-                                    mappings.iter().find(|m| m.device.matches(device))
+                                // Skip devices already tracked: one physical
+                                // keyboard can expose several HID nodes that each
+                                // appear in the initial set.
+                                if connected
+                                    .iter()
+                                    .any(|d| d.identifier.is_same_device(device))
+                                {
+                                    continue;
+                                }
+                                // Bind to the highest-priority matching mapping,
+                                // not merely the first one in config order.
+                                if let Some(mapping) = mappings
+                                    .iter()
+                                    .filter(|m| m.device.matches(device))
+                                    .max_by_key(|m| m.priority)
                                 {
                                     if verbose {
                                         println!(
@@ -146,19 +160,19 @@ impl CombinedMonitor {
                                     });
                                 }
                             }
-                            if connected.is_empty() {
-                                None
-                            } else {
-                                let profile = Self::get_highest_priority_profile(
-                                    &connected,
-                                    &default_profile,
-                                );
-                                println!("Initial device detected, target profile: {}", profile);
-                                Some(profile)
-                            }
+                            // Always reconcile at startup: when no monitored
+                            // keyboard is connected this resolves to the default
+                            // profile, correcting any stale profile left active.
+                            let profile =
+                                Self::get_highest_priority_profile(&connected, &default_profile);
+                            println!("Initial state resolved, target profile: {}", profile);
+                            Some(profile)
                         }
                         DeviceEvent::Connected(device) => {
-                            let Some(mapping) = mappings.iter().find(|m| m.device.matches(&device))
+                            let Some(mapping) = mappings
+                                .iter()
+                                .filter(|m| m.device.matches(&device))
+                                .max_by_key(|m| m.priority)
                             else {
                                 if verbose {
                                     println!(
@@ -176,10 +190,17 @@ impl CombinedMonitor {
                                     mapping.priority
                                 );
                             }
-                            connected.push(ConnectedDevice {
-                                identifier: device.clone(),
-                                mapping: mapping.clone(),
-                            });
+                            // Avoid duplicate entries when one physical keyboard
+                            // exposes multiple HID nodes (each fires Connected).
+                            if !connected
+                                .iter()
+                                .any(|d| d.identifier.is_same_device(&device))
+                            {
+                                connected.push(ConnectedDevice {
+                                    identifier: device.clone(),
+                                    mapping: mapping.clone(),
+                                });
+                            }
                             let profile =
                                 Self::get_highest_priority_profile(&connected, &default_profile);
                             println!(
@@ -191,7 +212,12 @@ impl CombinedMonitor {
                         }
                         DeviceEvent::Disconnected(device) => {
                             let before_len = connected.len();
-                            connected.retain(|d| !d.identifier.matches(&device));
+                            // Use exact identity (not partial-name `matches`) so a
+                            // disconnect only removes the device that actually
+                            // disconnected, never a still-connected keyboard whose
+                            // name is a substring of it (e.g. "Keychron K2" vs
+                            // "Keychron K2 Pro").
+                            connected.retain(|d| !d.identifier.is_same_device(&device));
                             if before_len == connected.len() {
                                 if verbose {
                                     println!(
@@ -297,5 +323,64 @@ mod tests {
         let actual_name = DeviceIdentifier::bluetooth("magic keyboard");
 
         assert!(config_name.matches(&actual_name));
+    }
+
+    #[test]
+    fn test_device_identifier_empty_bluetooth_name_matches_nothing() {
+        let empty = DeviceIdentifier::bluetooth("");
+        let any_device = DeviceIdentifier::bluetooth("Magic Keyboard");
+
+        // An empty configured name must NOT match every device.
+        assert!(!empty.matches(&any_device));
+        assert!(!any_device.matches(&empty));
+    }
+
+    #[test]
+    fn test_is_same_device_requires_exact_identity() {
+        // Partial-name `matches` is true both ways for overlapping names...
+        let k2 = DeviceIdentifier::bluetooth("Keychron K2");
+        let k2_pro = DeviceIdentifier::bluetooth("Keychron K2 Pro");
+        assert!(k2.matches(&k2_pro));
+
+        // ...but they are NOT the same physical device.
+        assert!(!k2.is_same_device(&k2_pro));
+        // Same name (case-insensitive) is the same device.
+        assert!(k2.is_same_device(&DeviceIdentifier::bluetooth("keychron k2")));
+        // USB exact match.
+        assert!(DeviceIdentifier::usb(1234).is_same_device(&DeviceIdentifier::usb(1234)));
+        assert!(!DeviceIdentifier::usb(1234).is_same_device(&DeviceIdentifier::usb(5678)));
+    }
+
+    #[test]
+    fn test_disconnect_does_not_evict_overlapping_named_device() {
+        // Two distinct BT keyboards with overlapping names are both tracked.
+        let mut connected = vec![
+            ConnectedDevice {
+                identifier: DeviceIdentifier::bluetooth("Keychron K2"),
+                mapping: KeyboardMapping::new(
+                    "K2",
+                    DeviceIdentifier::bluetooth("Keychron K2"),
+                    "Profile K2",
+                ),
+            },
+            ConnectedDevice {
+                identifier: DeviceIdentifier::bluetooth("Keychron K2 Pro"),
+                mapping: KeyboardMapping::new(
+                    "K2 Pro",
+                    DeviceIdentifier::bluetooth("Keychron K2 Pro"),
+                    "Profile K2 Pro",
+                ),
+            },
+        ];
+
+        // Disconnecting "Keychron K2" must leave "Keychron K2 Pro" tracked.
+        let disconnected = DeviceIdentifier::bluetooth("Keychron K2");
+        connected.retain(|d| !d.identifier.is_same_device(&disconnected));
+
+        assert_eq!(connected.len(), 1);
+        assert_eq!(
+            connected[0].identifier,
+            DeviceIdentifier::bluetooth("Keychron K2 Pro")
+        );
     }
 }
