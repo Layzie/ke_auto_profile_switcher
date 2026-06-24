@@ -8,7 +8,7 @@ use crate::error::{AppError, Result};
 #[cfg(target_os = "macos")]
 use crate::karabiner::KarabinerController;
 #[cfg(target_os = "macos")]
-use crate::monitor::{iokit::IoKitMonitor, DeviceEvent, DeviceMonitor};
+use crate::monitor::{DeviceEvent, DeviceMonitor, iokit::IoKitMonitor};
 use crate::monitor::{DeviceIdentifier, KeyboardMapping};
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex};

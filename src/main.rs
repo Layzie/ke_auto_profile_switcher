@@ -1,11 +1,11 @@
 use clap::Parser;
 use ke_auto_profile_switcher::{
+    Result,
     cli::{Action, Args, DeviceType},
-    config::{resolve_config, Config},
+    config::{Config, resolve_config},
     monitor::{
         bluetooth::list_bluetooth_devices, combined::CombinedMonitor, usb::list_usb_devices,
     },
-    Result,
 };
 
 fn main() -> Result<()> {

@@ -10,7 +10,7 @@ categories = ["command-line-utilities"]
 keywords = ["cli", "karabiner-elements"]
 license = "MIT"
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
 name = "kaps"

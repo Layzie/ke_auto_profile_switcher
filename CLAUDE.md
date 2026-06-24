@@ -133,7 +133,7 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 - **Requires Karabiner-Elements** to be installed on the system
 - **Device monitoring (`watch`)**: True event-driven via IOKit `IOServiceAddMatchingNotification` on `IOHIDDevice`. Reads only IORegistry metadata (never opens the device), so it does **not** require the Input Monitoring permission. No polling.
 - **Device listing (`check`)**: One-shot snapshot — USB via IOKit, Bluetooth via macOS `system_profiler SPBluetoothDataType`
-- **Rust Edition**: Uses Rust 2021 edition
+- **Rust Edition**: Uses Rust 2024 edition
 
 ## Development Guidelines
 
@@ -152,5 +152,5 @@ The `resolve_config()` function in `src/config/mod.rs` implements the priority l
 ## Gotchas
 
 - **`serde_yaml` is deprecated**: ビルド時にdeprecation警告が出る。将来的に`serde_yml`等への移行が必要
-- **Rust 2021 edition**: IOKit FFI の `unsafe` を多用するため、`unsafe_op_in_unsafe_fn` がデフォルト deny になる edition 2024 ではなく 2021 を採用している（`Cargo.toml` 参照）
+- **Rust 2024 edition / `unsafe_op_in_unsafe_fn`**: edition 2024 ではこの lint がデフォルトで有効（warn）になり、`unsafe fn` の本体でも IOKit FFI 呼び出しなどを明示的な `unsafe {}` ブロックで囲む必要がある。`src/monitor/iokit.rs` の各 `unsafe fn` は本体全体を `unsafe {}` で囲んでこれに対応している（`cargo fix --edition` 互換のスタイル）
 - **macOS限定**: `KARABINER_CLI_PATH`が`/Library/Application Support/...`にハードコードされており、他OSでは動作しない

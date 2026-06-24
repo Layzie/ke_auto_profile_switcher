@@ -10,21 +10,21 @@ use crate::error::{AppError, Result};
 use crate::monitor::{DeviceEvent, DeviceIdentifier, DeviceMonitor};
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::number::CFNumber;
-use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopSource};
+use core_foundation::runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopDefaultMode};
 use core_foundation::string::CFString;
 use core_foundation_sys::base::kCFAllocatorDefault;
 use core_foundation_sys::dictionary::CFDictionaryRef;
 use io_kit_sys::types::{io_iterator_t, io_registry_entry_t};
 use io_kit_sys::{
-    kIOMasterPortDefault, IOIteratorNext, IONotificationPortCreate, IONotificationPortDestroy,
+    IOIteratorNext, IONotificationPortCreate, IONotificationPortDestroy,
     IONotificationPortGetRunLoopSource, IONotificationPortRef, IOObjectRelease,
     IORegistryEntryCreateCFProperty, IORegistryEntryGetRegistryEntryID,
     IOServiceAddMatchingNotification, IOServiceGetMatchingServices, IOServiceMatching,
-    IOServiceMatchingCallback,
+    IOServiceMatchingCallback, kIOMasterPortDefault,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::os::raw::c_char;
 use std::sync::Arc;
 
@@ -97,57 +97,65 @@ fn is_monitored(id: &DeviceIdentifier, product_ids: &[u16], bt_names: &[String])
 
 /// Read a numeric IORegistry property as `u16`, or `None` if absent/non-numeric.
 unsafe fn read_u16_prop(entry: io_registry_entry_t, key: &str) -> Option<u16> {
-    read_number_prop(entry, key).map(|n| n as u16)
+    unsafe { read_number_prop(entry, key).map(|n| n as u16) }
 }
 
 /// Fetch an IORegistry property as an owned `CFType`, or `None` if absent.
 /// `IORegistryEntryCreateCFProperty` follows the Create Rule, so the returned
 /// reference is wrapped with `wrap_under_create_rule` (released on drop).
 unsafe fn read_property(entry: io_registry_entry_t, key: &str) -> Option<CFType> {
-    let cf_key = CFString::new(key);
-    let value = IORegistryEntryCreateCFProperty(
-        entry,
-        cf_key.as_concrete_TypeRef(),
-        kCFAllocatorDefault,
-        0,
-    );
-    if value.is_null() {
-        None
-    } else {
-        Some(CFType::wrap_under_create_rule(value))
+    unsafe {
+        let cf_key = CFString::new(key);
+        let value = IORegistryEntryCreateCFProperty(
+            entry,
+            cf_key.as_concrete_TypeRef(),
+            kCFAllocatorDefault,
+            0,
+        );
+        if value.is_null() {
+            None
+        } else {
+            Some(CFType::wrap_under_create_rule(value))
+        }
     }
 }
 
 unsafe fn read_number_prop(entry: io_registry_entry_t, key: &str) -> Option<i64> {
-    read_property(entry, key)?.downcast::<CFNumber>()?.to_i64()
+    unsafe { read_property(entry, key)?.downcast::<CFNumber>()?.to_i64() }
 }
 
 unsafe fn read_string_prop(entry: io_registry_entry_t, key: &str) -> Option<String> {
-    Some(
-        read_property(entry, key)?
-            .downcast::<CFString>()?
-            .to_string(),
-    )
+    unsafe {
+        Some(
+            read_property(entry, key)?
+                .downcast::<CFString>()?
+                .to_string(),
+        )
+    }
 }
 
 unsafe fn extract_props(entry: io_registry_entry_t) -> RawDeviceProps {
-    RawDeviceProps {
-        transport: read_string_prop(entry, PROP_TRANSPORT),
-        product_id: read_u16_prop(entry, PROP_PRODUCT_ID),
-        product_name: read_string_prop(entry, PROP_PRODUCT),
-        primary_usage: read_u16_prop(entry, PROP_PRIMARY_USAGE),
-        primary_usage_page: read_u16_prop(entry, PROP_PRIMARY_USAGE_PAGE),
+    unsafe {
+        RawDeviceProps {
+            transport: read_string_prop(entry, PROP_TRANSPORT),
+            product_id: read_u16_prop(entry, PROP_PRODUCT_ID),
+            product_name: read_string_prop(entry, PROP_PRODUCT),
+            primary_usage: read_u16_prop(entry, PROP_PRIMARY_USAGE),
+            primary_usage_page: read_u16_prop(entry, PROP_PRIMARY_USAGE_PAGE),
+        }
     }
 }
 
 /// The device's stable registry entry id. Readable even on termination (when
 /// properties may already be gone), so it is the key for disconnect lookups.
 unsafe fn registry_entry_id(entry: io_registry_entry_t) -> Option<u64> {
-    let mut id: u64 = 0;
-    if IORegistryEntryGetRegistryEntryID(entry, &mut id) == 0 {
-        Some(id)
-    } else {
-        None
+    unsafe {
+        let mut id: u64 = 0;
+        if IORegistryEntryGetRegistryEntryID(entry, &mut id) == 0 {
+            Some(id)
+        } else {
+            None
+        }
     }
 }
 
@@ -156,34 +164,36 @@ unsafe fn for_each_matching_service<F: FnMut(io_registry_entry_t)>(
     class: &str,
     mut f: F,
 ) -> Result<()> {
-    let cstr =
-        CString::new(class).map_err(|_| AppError::Monitor("invalid service class".into()))?;
-    let matching = IOServiceMatching(cstr.as_ptr());
-    if matching.is_null() {
-        return Err(AppError::Monitor("IOServiceMatching returned null".into()));
-    }
-    let mut iterator: io_iterator_t = 0;
-    let kr = IOServiceGetMatchingServices(
-        kIOMasterPortDefault,
-        matching as CFDictionaryRef,
-        &mut iterator,
-    );
-    if kr != 0 {
-        return Err(AppError::Monitor(format!(
-            "IOServiceGetMatchingServices failed ({})",
-            kr
-        )));
-    }
-    loop {
-        let obj = IOIteratorNext(iterator);
-        if obj == 0 {
-            break;
+    unsafe {
+        let cstr =
+            CString::new(class).map_err(|_| AppError::Monitor("invalid service class".into()))?;
+        let matching = IOServiceMatching(cstr.as_ptr());
+        if matching.is_null() {
+            return Err(AppError::Monitor("IOServiceMatching returned null".into()));
         }
-        f(obj);
-        IOObjectRelease(obj);
+        let mut iterator: io_iterator_t = 0;
+        let kr = IOServiceGetMatchingServices(
+            kIOMasterPortDefault,
+            matching as CFDictionaryRef,
+            &mut iterator,
+        );
+        if kr != 0 {
+            return Err(AppError::Monitor(format!(
+                "IOServiceGetMatchingServices failed ({})",
+                kr
+            )));
+        }
+        loop {
+            let obj = IOIteratorNext(iterator);
+            if obj == 0 {
+                break;
+            }
+            f(obj);
+            IOObjectRelease(obj);
+        }
+        IOObjectRelease(iterator);
+        Ok(())
     }
-    IOObjectRelease(iterator);
-    Ok(())
 }
 
 type SharedCallback = Arc<dyn Fn(DeviceEvent) -> Result<()> + Send + Sync + 'static>;
@@ -226,19 +236,21 @@ impl MonitorContext {
 /// the notification will not re-arm. `connecting` selects first-match (connect)
 /// vs terminate (disconnect) handling.
 unsafe fn drain_and_dispatch(ctx: &MonitorContext, iterator: io_iterator_t, connecting: bool) {
-    let treat_as_initial = connecting && ctx.is_initial.get();
-    let mut initial: Vec<DeviceIdentifier> = Vec::new();
+    unsafe {
+        let treat_as_initial = connecting && ctx.is_initial.get();
+        let mut initial: Vec<DeviceIdentifier> = Vec::new();
 
-    loop {
-        let obj = IOIteratorNext(iterator);
-        if obj == 0 {
-            break;
-        }
+        loop {
+            let obj = IOIteratorNext(iterator);
+            if obj == 0 {
+                break;
+            }
 
-        if connecting {
-            let props = extract_props(obj);
-            if let Some(id) = props_to_identifier(&props) {
-                if is_monitored(&id, &ctx.product_ids, &ctx.bt_names) {
+            if connecting {
+                let props = extract_props(obj);
+                if let Some(id) = props_to_identifier(&props)
+                    && is_monitored(&id, &ctx.product_ids, &ctx.bt_names)
+                {
                     // Only track (and emit) devices whose stable entry id we can
                     // read, so a later termination always maps back to a
                     // Connected/Initial event. In practice the id is always
@@ -252,33 +264,37 @@ unsafe fn drain_and_dispatch(ctx: &MonitorContext, iterator: io_iterator_t, conn
                         }
                     }
                 }
+            } else if let Some(eid) = registry_entry_id(obj) {
+                let removed = ctx.entry_map.borrow_mut().remove(&eid);
+                if let Some(id) = removed {
+                    ctx.dispatch(DeviceEvent::Disconnected(id));
+                }
             }
-        } else if let Some(eid) = registry_entry_id(obj) {
-            let removed = ctx.entry_map.borrow_mut().remove(&eid);
-            if let Some(id) = removed {
-                ctx.dispatch(DeviceEvent::Disconnected(id));
-            }
+
+            IOObjectRelease(obj);
         }
 
-        IOObjectRelease(obj);
-    }
-
-    if treat_as_initial {
-        ctx.is_initial.set(false);
-        if !initial.is_empty() {
-            ctx.dispatch(DeviceEvent::Initial(initial));
+        if treat_as_initial {
+            ctx.is_initial.set(false);
+            if !initial.is_empty() {
+                ctx.dispatch(DeviceEvent::Initial(initial));
+            }
         }
     }
 }
 
 unsafe extern "C" fn first_match_callback(refcon: *mut c_void, iterator: io_iterator_t) {
-    let ctx = &*(refcon as *const MonitorContext);
-    drain_and_dispatch(ctx, iterator, true);
+    unsafe {
+        let ctx = &*(refcon as *const MonitorContext);
+        drain_and_dispatch(ctx, iterator, true);
+    }
 }
 
 unsafe extern "C" fn terminate_callback(refcon: *mut c_void, iterator: io_iterator_t) {
-    let ctx = &*(refcon as *const MonitorContext);
-    drain_and_dispatch(ctx, iterator, false);
+    unsafe {
+        let ctx = &*(refcon as *const MonitorContext);
+        drain_and_dispatch(ctx, iterator, false);
+    }
 }
 
 /// Register one matching notification and return its (drainable) iterator.
@@ -289,30 +305,32 @@ unsafe fn add_matching_notification(
     callback: IOServiceMatchingCallback,
     refcon: *mut c_void,
 ) -> Result<io_iterator_t> {
-    let cstr_type = CString::new(notif_type)
-        .map_err(|_| AppError::Monitor("invalid notification type".into()))?;
-    let cstr_class =
-        CString::new(class).map_err(|_| AppError::Monitor("invalid service class".into()))?;
-    let matching = IOServiceMatching(cstr_class.as_ptr());
-    if matching.is_null() {
-        return Err(AppError::Monitor("IOServiceMatching returned null".into()));
+    unsafe {
+        let cstr_type = CString::new(notif_type)
+            .map_err(|_| AppError::Monitor("invalid notification type".into()))?;
+        let cstr_class =
+            CString::new(class).map_err(|_| AppError::Monitor("invalid service class".into()))?;
+        let matching = IOServiceMatching(cstr_class.as_ptr());
+        if matching.is_null() {
+            return Err(AppError::Monitor("IOServiceMatching returned null".into()));
+        }
+        let mut iterator: io_iterator_t = 0;
+        let kr = IOServiceAddMatchingNotification(
+            notify_port,
+            cstr_type.as_ptr() as *mut c_char,
+            matching as CFDictionaryRef,
+            callback,
+            refcon,
+            &mut iterator,
+        );
+        if kr != 0 {
+            return Err(AppError::Monitor(format!(
+                "IOServiceAddMatchingNotification failed ({})",
+                kr
+            )));
+        }
+        Ok(iterator)
     }
-    let mut iterator: io_iterator_t = 0;
-    let kr = IOServiceAddMatchingNotification(
-        notify_port,
-        cstr_type.as_ptr() as *mut c_char,
-        matching as CFDictionaryRef,
-        callback,
-        refcon,
-        &mut iterator,
-    );
-    if kr != 0 {
-        return Err(AppError::Monitor(format!(
-            "IOServiceAddMatchingNotification failed ({})",
-            kr
-        )));
-    }
-    Ok(iterator)
 }
 
 impl DeviceMonitor for IoKitMonitor {

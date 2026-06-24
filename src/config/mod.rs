@@ -81,13 +81,13 @@ impl Config {
                 warnings.push("A keyboard mapping has an empty name".to_string());
             }
             // An empty Bluetooth device name would match every Bluetooth device.
-            if let DeviceIdentifier::Bluetooth { device_name } = &mapping.device {
-                if device_name.trim().is_empty() {
-                    warnings.push(format!(
-                        "Keyboard '{}' has an empty Bluetooth device name (would match every Bluetooth device)",
-                        mapping.name
-                    ));
-                }
+            if let DeviceIdentifier::Bluetooth { device_name } = &mapping.device
+                && device_name.trim().is_empty()
+            {
+                warnings.push(format!(
+                    "Keyboard '{}' has an empty Bluetooth device name (would match every Bluetooth device)",
+                    mapping.name
+                ));
             }
         }
 

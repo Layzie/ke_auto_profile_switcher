@@ -172,9 +172,11 @@ fn test_validate_empty_bluetooth_name() {
     let config = Config::new("Default", vec![mapping]);
 
     let warnings = config.validate();
-    assert!(warnings
-        .iter()
-        .any(|w| w.contains("empty Bluetooth device name")));
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("empty Bluetooth device name"))
+    );
 }
 
 #[test]
