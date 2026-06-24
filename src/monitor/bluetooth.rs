@@ -26,17 +26,21 @@ struct BluetoothDeviceInfo {
 }
 
 fn get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
-    get_connected_devices_with_retry(MAX_RETRIES)
+    // Retry only the (transient) command execution; parse the result once.
+    // Parse failures are deterministic and must not be retried.
+    let stdout = run_system_profiler_with_retry(MAX_RETRIES)?;
+    parse_bluetooth_json(&stdout)
 }
 
-/// Get connected devices with the specified number of retries.
-fn get_connected_devices_with_retry(max_retries: u32) -> Result<Vec<BluetoothDeviceInfo>> {
+/// Run `system_profiler`, retrying only on transient execution failures (spawn
+/// error or non-zero exit). The raw stdout bytes are returned for parsing.
+fn run_system_profiler_with_retry(max_retries: u32) -> Result<Vec<u8>> {
     let mut last_error = None;
     let mut delay = Duration::from_millis(RETRY_DELAY_MS);
 
     for attempt in 0..=max_retries {
-        match try_get_connected_devices() {
-            Ok(devices) => return Ok(devices),
+        match run_system_profiler() {
+            Ok(stdout) => return Ok(stdout),
             Err(e) => {
                 last_error = Some(e);
                 if attempt < max_retries {
@@ -52,8 +56,8 @@ fn get_connected_devices_with_retry(max_retries: u32) -> Result<Vec<BluetoothDev
     }))
 }
 
-/// Try to get connected devices (single attempt).
-fn try_get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
+/// Execute `system_profiler SPBluetoothDataType -json` once, returning raw stdout.
+fn run_system_profiler() -> Result<Vec<u8>> {
     let output = Command::new("system_profiler")
         .args(["SPBluetoothDataType", "-json"])
         .output()
@@ -65,7 +69,7 @@ fn try_get_connected_devices() -> Result<Vec<BluetoothDeviceInfo>> {
         ));
     }
 
-    parse_bluetooth_json(&output.stdout)
+    Ok(output.stdout)
 }
 
 /// Parse the JSON output from system_profiler.
