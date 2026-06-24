@@ -1,37 +1,70 @@
 name: Release to crates.io (trusted publishing)
 
+# main への push で Cargo.toml の version を読み取り、未作成なら v{version}
+# タグを作成・push したうえで crates.io へ公開する。タグ作成と公開を同一
+# ジョブ内で完結させることで、GITHUB_TOKEN が push したタグでは後続ワーク
+# フローが起動しない GitHub Actions の再帰防止仕様を回避している。
 on:
-  create:
-    tags:
-      - 'v*'
+  push:
+    branches: [main]
   workflow_dispatch:
 
-jobs:
-  publish:
-    if: github.event.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+permissions:
+  contents: write # タグの作成・push に必要
+  id-token: write # trusted publishing (OIDC) のトークン取得に必要
 
-    permissions:
-      id-token: write
-      contents: read
+jobs:
+  release:
+    # Karabiner-Elements は macOS 専用。cargo publish の検証ビルドを実際の
+    # ターゲットで通すため macOS ランナーで実行する。
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Ensure tag is on main branch
-        if: github.event.ref_type == 'tag'
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from Cargo.toml
+        id: version
         run: |
-          git fetch origin main
-          TAG_COMMIT=$(git rev-parse ${{ github.sha }})
-          if ! git merge-base --is-ancestor $TAG_COMMIT origin/main; then
-            echo "❌ Tag is not on main branch. Skipping."
-            exit 1
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists. Skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} does not exist. Proceeding with release."
           fi
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Install Rust toolchain
+        if: steps.check_tag.outputs.exists == 'false'
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-      - name: Publish to crates.io using trusted publishing
+
+      - name: Create and push tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Authenticate with crates.io (trusted publishing)
+        if: steps.check_tag.outputs.exists == 'false'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        if: steps.check_tag.outputs.exists == 'false'
         run: cargo publish --no-interactive
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
