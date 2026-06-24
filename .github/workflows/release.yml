@@ -1,9 +1,12 @@
 name: Release to crates.io (trusted publishing)
 
-# main への push で Cargo.toml の version を読み取り、未作成なら v{version}
-# タグを作成・push したうえで crates.io へ公開する。タグ作成と公開を同一
-# ジョブ内で完結させることで、GITHUB_TOKEN が push したタグでは後続ワーク
-# フローが起動しない GitHub Actions の再帰防止仕様を回避している。
+# main への push で Cargo.toml の version を読み取り、crates.io に未公開なら
+# crates.io へ公開し、公開成功後に v{version} タグを作成・push する。公開を
+# 先に行うことで、公開が失敗したときにタグだけが残り、再実行が「タグ既存」で
+# スキップされてしまう問題を防ぐ。さらに公開済み判定を crates.io 上のバージョン
+# 有無で行うことで冪等性を担保する。タグ作成と公開を同一ジョブ内で完結させる
+# ことで、GITHUB_TOKEN が push したタグでは後続ワークフローが起動しない GitHub
+# Actions の再帰防止仕様を回避している。
 on:
   push:
     branches: [main]
@@ -33,38 +36,51 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "Detected version: $VERSION"
 
-      - name: Check if tag already exists
-        id: check_tag
+      - name: Check if version already published on crates.io
+        id: check_published
         run: |
-          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+          VERSION="${{ steps.version.outputs.version }}"
+          # crates.io のスパースインデックスでバージョンの有無を確認する。
+          # 該当バージョンの行が存在すれば公開済みとみなしてスキップする。
+          if curl -sSf "https://index.crates.io/ke/_a/ke_auto_profile_switcher" \
+            | grep -q "\"vers\":\"$VERSION\""; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${{ steps.version.outputs.tag }} already exists. Skipping release."
+            echo "Version $VERSION is already published on crates.io. Skipping release."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Tag ${{ steps.version.outputs.tag }} does not exist. Proceeding with release."
+            echo "Version $VERSION is not published yet. Proceeding with release."
           fi
 
       - name: Install Rust toolchain
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_published.outputs.exists == 'false'
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
 
-      - name: Create and push tag
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git tag "${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
-
       - name: Authenticate with crates.io (trusted publishing)
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_published.outputs.exists == 'false'
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish to crates.io
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_published.outputs.exists == 'false'
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      # 公開が成功してからタグを作成・push する。これにより公開失敗時に
+      # タグだけが残ることを防ぐ。タグが既に存在する場合は作成・push を
+      # スキップして冪等にする。
+      - name: Create and push tag
+        if: steps.check_published.outputs.exists == 'false'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag }} already exists locally. Skipping tag creation."
+          elif git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag }} already exists on origin. Skipping tag push."
+          else
+            git tag "${{ steps.version.outputs.tag }}"
+            git push origin "${{ steps.version.outputs.tag }}"
+          fi
