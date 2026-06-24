@@ -151,32 +151,4 @@ pub trait DeviceMonitor: Send + Sync {
     fn start_monitoring<F>(&self, callback: F) -> Result<()>
     where
         F: Fn(DeviceEvent) -> Result<()> + Send + Sync + 'static;
-
-    /// List currently connected devices that match the monitored criteria
-    fn list_devices(&self) -> Result<Vec<DeviceInfo>>;
-}
-
-/// Information about a detected device
-#[derive(Debug, Clone)]
-pub struct DeviceInfo {
-    /// Device identifier
-    pub identifier: DeviceIdentifier,
-    /// Device description/name
-    pub description: String,
-    /// Whether the device is currently connected
-    pub connected: bool,
-}
-
-impl DeviceInfo {
-    pub fn new(
-        identifier: DeviceIdentifier,
-        description: impl Into<String>,
-        connected: bool,
-    ) -> Self {
-        DeviceInfo {
-            identifier,
-            description: description.into(),
-            connected,
-        }
-    }
 }

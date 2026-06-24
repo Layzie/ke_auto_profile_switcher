@@ -7,7 +7,7 @@
 //! does **not** require the Input Monitoring TCC permission.
 
 use crate::error::{AppError, Result};
-use crate::monitor::{DeviceEvent, DeviceIdentifier, DeviceInfo, DeviceMonitor};
+use crate::monitor::{DeviceEvent, DeviceIdentifier, DeviceMonitor};
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::number::CFNumber;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopSource};
@@ -387,23 +387,6 @@ impl DeviceMonitor for IoKitMonitor {
         }
 
         Ok(())
-    }
-
-    fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
-        let mut devices = Vec::new();
-        unsafe {
-            for_each_matching_service(IOHID_DEVICE_CLASS, |obj| {
-                let props = extract_props(obj);
-                if let Some(id) = props_to_identifier(&props) {
-                    let desc = props
-                        .product_name
-                        .clone()
-                        .unwrap_or_else(|| id.display_name());
-                    devices.push(DeviceInfo::new(id, desc, true));
-                }
-            })?;
-        }
-        Ok(devices)
     }
 }
 
