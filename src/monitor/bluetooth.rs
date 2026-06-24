@@ -102,8 +102,7 @@ fn parse_bluetooth_json(json_bytes: &[u8]) -> Result<Vec<BluetoothDeviceInfo>> {
                             let is_keyboard = info
                                 .get("device_minorType")
                                 .and_then(|v| v.as_str())
-                                .map(|t| t.to_ascii_lowercase().contains("keyboard"))
-                                .unwrap_or(false);
+                                .is_some_and(|t| t.to_ascii_lowercase().contains("keyboard"));
 
                             devices.push(BluetoothDeviceInfo {
                                 name: name.clone(),
@@ -137,14 +136,14 @@ fn parse_bluetooth_json(json_bytes: &[u8]) -> Result<Vec<BluetoothDeviceInfo>> {
                             let connected = device
                                 .get("device_connected")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s == "attrib_Yes" || s.eq_ignore_ascii_case("yes"))
-                                .unwrap_or(false);
+                                .is_some_and(|s| {
+                                    s == "attrib_Yes" || s.eq_ignore_ascii_case("yes")
+                                });
 
                             let is_keyboard = device
                                 .get("device_minorType")
                                 .and_then(|v| v.as_str())
-                                .map(|t| t.to_ascii_lowercase().contains("keyboard"))
-                                .unwrap_or(false);
+                                .is_some_and(|t| t.to_ascii_lowercase().contains("keyboard"));
 
                             devices.push(BluetoothDeviceInfo {
                                 name,
