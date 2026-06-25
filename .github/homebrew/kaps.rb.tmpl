@@ -1,0 +1,25 @@
+class Kaps < Formula
+  desc "Auto-switch Karabiner-Elements profiles by keyboard connection"
+  homepage "https://github.com/Layzie/ke_auto_profile_switcher"
+  url "https://github.com/Layzie/ke_auto_profile_switcher/releases/download/v__VERSION__/kaps-universal-apple-darwin.tar.gz"
+  sha256 "__SHA256__"
+  version "__VERSION__"
+  license "MIT"
+
+  depends_on :macos
+
+  def install
+    bin.install "kaps"
+  end
+
+  def caveats
+    <<~EOS
+      kaps requires Karabiner-Elements to be installed:
+        https://karabiner-elements.pqrs.org/
+    EOS
+  end
+
+  test do
+    assert_match "kaps", shell_output("#{bin}/kaps --help")
+  end
+end

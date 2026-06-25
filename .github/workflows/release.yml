@@ -84,3 +84,62 @@ jobs:
             git tag "${{ steps.version.outputs.tag }}"
             git push origin "${{ steps.version.outputs.tag }}"
           fi
+
+      # ここから先は Homebrew 配布（パターン B）用。crates.io 公開と同じ
+      # 「未公開のときだけ」実行し、macOS universal binary を生成して GitHub
+      # Releases に添付し、個人 tap の formula を自動更新する。
+      - name: Add cross-compilation targets
+        if: steps.check_published.outputs.exists == 'false'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build universal binary (arm64 + x86_64)
+        if: steps.check_published.outputs.exists == 'false'
+        id: build_binary
+        run: |
+          # macos-latest は arm64 ランナー。x86_64 は SDK 同梱でクロスビルドできる。
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          lipo -create -output kaps \
+            target/aarch64-apple-darwin/release/kaps \
+            target/x86_64-apple-darwin/release/kaps
+          lipo -info kaps
+          tar -czf kaps-universal-apple-darwin.tar.gz kaps
+          SHA=$(shasum -a 256 kaps-universal-apple-darwin.tar.gz | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Universal binary sha256: $SHA"
+
+      - name: Create GitHub Release with universal binary
+        if: steps.check_published.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            kaps-universal-apple-darwin.tar.gz \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes "Prebuilt macOS universal binary (arm64 + x86_64) for Homebrew. Install with \`brew install Layzie/tap/kaps\`." \
+            --verify-tag
+
+      # 個人 tap (Layzie/homebrew-tap) の Formula/kaps.rb を新しい
+      # url/sha256/version で更新する。GITHUB_TOKEN は別リポジトリへ push
+      # できないため、tap 限定の fine-grained PAT (HOMEBREW_TAP_TOKEN) を使う。
+      - name: Update Homebrew tap formula
+        if: steps.check_published.outputs.exists == 'false'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.build_binary.outputs.sha256 }}
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Layzie/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          sed -e "s/__VERSION__/${VERSION}/g" -e "s/__SHA256__/${SHA256}/g" \
+            .github/homebrew/kaps.rb.tmpl > tap/Formula/kaps.rb
+          cd tap
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Formula/kaps.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date. Nothing to commit."
+          else
+            git commit -m "kaps ${VERSION}"
+            git push
+          fi
