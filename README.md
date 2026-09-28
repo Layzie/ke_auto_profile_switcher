@@ -19,6 +19,14 @@ This CLI automatically switches [Karabiner-Elements](https://karabiner-elements.
 - **Configuration Validation**: Warnings for duplicate mappings and invalid configurations
 
 ## Install
+
+### Homebrew (Recommended — no Rust toolchain required)
+```bash
+$ brew install Layzie/tap/kaps
+```
+This installs a prebuilt macOS universal binary (arm64 + x86_64).
+
+### Cargo (build from source)
 ```bash
 $ cargo install ke_auto_profile_switcher
 ```
@@ -229,7 +237,7 @@ default_profile: "Default"
 - macOS with [Karabiner-Elements](https://karabiner-elements.pqrs.org/) installed
 - The application assumes Karabiner-Elements is installed in the default location (`/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli`)
 - No extra system permissions are required — device monitoring reads IOKit metadata only and does not request Input Monitoring access
-- Rust toolchain (edition 2021) when building from source
+- No Rust toolchain is required when installing via Homebrew; a Rust toolchain (edition 2024) is only needed when building from source (`cargo install`)
 
 ## LICENSE
 
