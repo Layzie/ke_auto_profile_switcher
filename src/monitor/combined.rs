@@ -113,7 +113,7 @@ impl CombinedMonitor {
 
         // Sort once (descending) for display; the handler below reuses the same
         // ordering. `max_by_key` is stable, so the chosen mapping is unaffected.
-        self.mappings.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.mappings.sort_by_key(|m| std::cmp::Reverse(m.priority));
         for mapping in &self.mappings {
             println!(
                 "  - {} [priority: {}] -> Profile: {}",

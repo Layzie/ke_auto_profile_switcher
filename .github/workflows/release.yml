@@ -18,6 +18,9 @@ permissions:
 
 jobs:
   release:
+    # workflow_dispatch は任意のブランチから起動できるため、main 以外の
+    # コードが公開されないよう main でのみ実行する。
+    if: github.ref == 'refs/heads/main'
     # Karabiner-Elements は macOS 専用。cargo publish の検証ビルドを実際の
     # ターゲットで通すため macOS ランナーで実行する。
     runs-on: macos-latest
@@ -56,6 +59,16 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          components: clippy
+
+      # テストや lint が落ちている状態で公開されないよう、公開前に検証する。
+      - name: Run clippy
+        if: steps.check_published.outputs.exists == 'false'
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Run tests
+        if: steps.check_published.outputs.exists == 'false'
+        run: cargo test --locked
 
       - name: Authenticate with crates.io (trusted publishing)
         if: steps.check_published.outputs.exists == 'false'
